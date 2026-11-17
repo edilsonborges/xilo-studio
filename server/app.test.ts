@@ -20,6 +20,7 @@ function writeDist(dist: string): void {
   mkdirSync(join(dist, 'assets'), { recursive: true });
   for (const page of ['index', 'login', 'admin']) writeFileSync(join(dist, `${page}.html`), `<p>${page}</p>`);
   writeFileSync(join(dist, 'favicon.svg'), '<svg />');
+  writeFileSync(join(dist, 'og.jpg'), 'jpeg');
   for (const file of ['login.js', 'api.js', 'api.css', 'main.js', 'admin.js', 'sdk.js']) {
     writeFileSync(join(dist, 'assets', file), `/* ${file} */`);
   }
@@ -91,6 +92,9 @@ test('sem sessão, só a tela de login e seus arquivos ficam acessíveis', async
   }
   await request(app).get('/index.html').expect(404);
   await request(app).get('/healthz').expect(200, 'ok\n');
+  // a prévia de link (WhatsApp) precisa da imagem sem login
+  await request(app).get('/og.jpg').expect(200);
+  await request(app).get('/favicon.svg').expect(200);
 });
 
 test('admin cria a senha pelo link do e-mail e entra no app e no painel', async (t) => {
