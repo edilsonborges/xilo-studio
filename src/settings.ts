@@ -1,8 +1,16 @@
 // Configurações do usuário. As chaves de API vivem só no localStorage.
 
 export type LlmProvider = 'none' | 'xilo' | 'openai' | 'gemini' | 'anthropic';
-export type VideoStyle = 'xilogravura' | 'aquarela' | 'infantil' | 'cinema' | '3d';
-export const VIDEO_STYLES: readonly VideoStyle[] = ['xilogravura', 'aquarela', 'infantil', 'cinema', '3d'];
+import { RENDER_STYLES } from './engine/styles';
+
+/** Ilustrado por IA (xilogravura, aquarela…) ou um dos visuais 3D ("3d-<id>"). */
+export type VideoStyle = 'xilogravura' | 'aquarela' | 'infantil' | 'cinema' | `3d-${string}`;
+export const VIDEO_STYLES: readonly string[] = [
+  'xilogravura', 'aquarela', 'infantil', 'cinema',
+  ...RENDER_STYLES.map((style) => `3d-${style.id}`),
+];
+
+export const is3dStyle = (style: string): style is `3d-${string}` => style.startsWith('3d-');
 export type TranscriptionProvider = 'local' | 'openai';
 
 export interface Settings {
@@ -63,6 +71,8 @@ export function loadSettings(): Settings {
     if (!['none', 'xilo', 'openai', 'gemini', 'anthropic'].includes(merged.llmProvider)) {
       merged.llmProvider = 'xilo';
     }
+    // o antigo "3D de cordel" virou o visual "Xilogravura clássica"
+    if ((merged.videoStyle as string) === '3d') merged.videoStyle = '3d-xilogravura';
     if (!VIDEO_STYLES.includes(merged.videoStyle)) merged.videoStyle = 'xilogravura';
     return merged;
   } catch {

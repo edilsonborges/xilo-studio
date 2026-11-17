@@ -12,7 +12,9 @@ import { computeCameraPose } from './camera';
 import { createCharacter, poseCharacter, type CharacterRig } from './character';
 import { createEnvironment, type EnvironmentObject } from './environment';
 import { createProp, type PropObject } from './props';
-import { disposeTree } from './toon';
+import { StylePass } from './post';
+import { DEFAULT_RENDER_STYLE, type RenderStyle } from './styles';
+import { disposeTree, setMaterialLook } from './toon';
 
 export const FRAME_WIDTH = 1080;
 export const FRAME_HEIGHT = 1920;
@@ -46,6 +48,8 @@ export class SceneEngine {
   private scenes: SceneDef[] = [];
   private built: BuiltScene | null = null;
   private readonly fallbackScene = new THREE.Scene();
+  private readonly pass: StylePass;
+  private style: RenderStyle = DEFAULT_RENDER_STYLE;
 
   constructor() {
     this.canvas = document.createElement('canvas');
@@ -66,6 +70,31 @@ export class SceneEngine {
 
     this.camera = new THREE.PerspectiveCamera(50, FRAME_WIDTH / FRAME_HEIGHT, 0.1, 500);
     this.fallbackScene.background = new THREE.Color('#1b1512');
+    this.pass = new StylePass(FRAME_WIDTH, FRAME_HEIGHT);
+    this.setStyle(DEFAULT_RENDER_STYLE);
+  }
+
+  /** Troca o visual: materiais e contornos mudam, então a cena é remontada. */
+  setStyle(style: RenderStyle): void {
+    this.style = style;
+    setMaterialLook(style.material);
+    this.pass.setLook(style.post);
+    this.disposeBuilt();
+  }
+
+  get styleId(): string {
+    return this.style.id;
+  }
+
+  private draw(scene: THREE.Scene, t: number): void {
+    if (!this.pass.active) {
+      this.renderer.setRenderTarget(null);
+      this.renderer.render(scene, this.camera);
+      return;
+    }
+    this.renderer.setRenderTarget(this.pass.target);
+    this.renderer.render(scene, this.camera);
+    this.pass.render(this.renderer, t);
   }
 
   setSceneGraph(graph: SceneGraphJSON): void {
@@ -95,7 +124,7 @@ export class SceneEngine {
   render(t: number): void {
     const index = this.sceneIndexAt(t);
     if (index < 0) {
-      this.renderer.render(this.fallbackScene, this.camera);
+      this.draw(this.fallbackScene, t);
       return;
     }
     const def = this.scenes[index];
@@ -126,10 +155,13 @@ export class SceneEngine {
     this.camera.position.copy(pose.position);
     this.camera.position.y = Math.max(0.3, this.camera.position.y);
     this.camera.lookAt(pose.lookAt);
-    this.renderer.render(built.scene, this.camera);
+    // os materiais da cena são do visual atual (setStyle remonta a cena)
+    setMaterialLook(this.style.material);
+    this.draw(built.scene, t);
   }
 
   private build(def: SceneDef, index: number): BuiltScene {
+    setMaterialLook(this.style.material);
     const scene = new THREE.Scene();
     const seed = hashString(`${def.id}:${index}`);
     const environment = createEnvironment(def.environment.preset, def.environment, seed);
@@ -209,6 +241,7 @@ export class SceneEngine {
 
   dispose(): void {
     this.disposeBuilt();
+    this.pass.dispose();
     this.renderer.dispose();
   }
 }

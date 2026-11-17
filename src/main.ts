@@ -10,7 +10,8 @@ import { splitScenes } from './director/splitter';
 import { sanitizeSceneGraph } from './director/validate';
 import { SceneEngine } from './engine/engine';
 import { exportVideo, pickMimeType, type ExportFormat } from './export/exporter';
-import { DEFAULT_SETTINGS, llmKey, loadSettings, saveSettings, type Settings } from './settings';
+import { DEFAULT_SETTINGS, is3dStyle, llmKey, loadSettings, saveSettings, type Settings } from './settings';
+import { RENDER_STYLES, STYLE_CATEGORIES, renderStyle } from './engine/styles';
 import type { SceneGraphJSON, Timeline } from './types';
 import { formatTime } from './util';
 import { imagePrompt, storyboard, type IllustrationStyle } from './illustrated/director';
@@ -114,12 +115,12 @@ function updateBadge(): void {
     ? 'Edge TTS'
     : settings.transcription === 'openai' && settings.openaiKey.trim() ? 'Whisper' : 'alinhador local';
   const director = settings.llmProvider === 'xilo' ? 'IA do Xilo' : settings.llmProvider;
-  const scenes = settings.videoStyle !== '3d'
+  const scenes = !is3dStyle(settings.videoStyle)
     ? 'imagens por IA'
     : settings.llmProvider !== 'none' && llmKey(settings) ? `3D, ${director}` : '3D, regras';
   ui.modeBadge.textContent = `Tempos: ${stamps} · Cenas: ${scenes}`;
-  ui.styleHint.textContent = settings.videoStyle === '3d'
-    ? 'Cenas montadas com peças 3D prontas (sertão, vila, floresta). Rápido, mas não desenha nada fora desse kit.'
+  ui.styleHint.textContent = is3dStyle(settings.videoStyle)
+    ? `${renderStyle(settings.videoStyle.slice(3)).description} Cenas 3D montadas na hora; dá para trocar o visual sem gerar de novo.`
     : 'A IA desenha uma imagem para cada cena, no estilo escolhido. Cada imagem leva de alguns segundos a um ou dois minutos.';
 }
 
@@ -151,6 +152,8 @@ function ensureCompositor(source: FrameSource): Compositor {
 
 function ensureEngine(): Compositor {
   engine ??= new SceneEngine();
+  const style = is3dStyle(settings.videoStyle) ? settings.videoStyle.slice(3) : 'xilogravura';
+  if (engine.styleId !== style) engine.setStyle(renderStyle(style));
   return ensureCompositor(engine);
 }
 
@@ -377,10 +380,10 @@ async function generate(): Promise<void> {
 
     const slots = splitScenes(timeline);
     const ai = await aiStatus();
-    if (settings.videoStyle !== '3d') {
+    if (!is3dStyle(settings.videoStyle)) {
       if (!ai.images) {
         addStatus('A IA de imagens não está disponível agora. Fiz o vídeo em 3D.', 'warn');
-      } else if (await generateIllustrated(script, slots, file, buffer, timeline, settings.videoStyle)) {
+      } else if (await generateIllustrated(script, slots, file, buffer, timeline, settings.videoStyle as IllustrationStyle)) {
         return;
       }
     }
@@ -496,11 +499,25 @@ async function generateIllustrated(
 
 ui.generate.addEventListener('click', () => void generate());
 
+// os visuais 3D, agrupados por categoria, depois dos estilos ilustrados
+for (const category of STYLE_CATEGORIES) {
+  const group = document.createElement('optgroup');
+  group.label = `3D · ${category}`;
+  for (const style of RENDER_STYLES.filter((s) => s.category === category)) {
+    group.append(new Option(style.label, `3d-${style.id}`));
+  }
+  ui.videoStyle.append(group);
+}
 ui.videoStyle.value = settings.videoStyle;
 ui.videoStyle.addEventListener('change', () => {
   settings = { ...settings, videoStyle: ui.videoStyle.value as Settings['videoStyle'] };
   saveSettings(settings);
   updateBadge();
+  // vídeo 3D já gerado: aplica o visual novo na hora, sem gerar de novo
+  if (project?.graph && engine && is3dStyle(settings.videoStyle)) {
+    ensureEngine();
+    dirty = true;
+  }
 });
 
 ui.applyJson.addEventListener('click', () => {

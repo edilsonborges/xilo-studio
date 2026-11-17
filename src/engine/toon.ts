@@ -2,11 +2,12 @@
 // por casco invertido (malha duplicada, BackSide, um pouco maior).
 
 import * as THREE from 'three';
+import type { MaterialLook } from './styles';
 
-/** Rampa de 3 tons, sem interpolação: é isso que deixa a sombra "chapada". */
-function makeGradientMap(): THREE.DataTexture {
-  const tones = new Uint8Array([70, 70, 70, 255, 165, 165, 165, 255, 255, 255, 255, 255]);
-  const tex = new THREE.DataTexture(tones, 3, 1, THREE.RGBAFormat);
+/** Rampa de tons sem interpolação: é isso que deixa a sombra "chapada". */
+function makeGradientMap(levels: number[]): THREE.DataTexture {
+  const tones = new Uint8Array(levels.flatMap((v) => [v, v, v, 255]));
+  const tex = new THREE.DataTexture(tones, levels.length, 1, THREE.RGBAFormat);
   tex.minFilter = THREE.NearestFilter;
   tex.magFilter = THREE.NearestFilter;
   tex.generateMipmaps = false;
@@ -14,23 +15,47 @@ function makeGradientMap(): THREE.DataTexture {
   return tex;
 }
 
-export const gradientMap = makeGradientMap();
+const GRADIENTS = {
+  toon2: makeGradientMap([95, 255]),
+  toon3: makeGradientMap([70, 165, 255]),
+  toon5: makeGradientMap([60, 110, 160, 210, 255]),
+};
+export const gradientMap = GRADIENTS.toon3;
 
-const toonCache = new Map<string, THREE.MeshToonMaterial>();
+/** Visual atual do 3D (styles.ts): define o material e o contorno das peças novas. */
+let look: MaterialLook = { shading: 'toon3', outline: 1, outlineColor: '#000000' };
 
-/** Material toon compartilhado por cor (nunca descartado: vive com o app). */
-export function toonMaterial(color: string): THREE.MeshToonMaterial {
-  let mat = toonCache.get(color);
+export function setMaterialLook(next: MaterialLook): void {
+  look = next;
+}
+
+const materialCache = new Map<string, THREE.Material>();
+
+/** Material compartilhado por cor e visual (nunca descartado: vive com o app). */
+export function toonMaterial(color: string): THREE.Material {
+  const key = `${look.shading}|${color}`;
+  let mat = materialCache.get(key);
   if (!mat) {
-    mat = new THREE.MeshToonMaterial({ color, gradientMap });
+    mat = look.shading === 'smooth'
+      ? new THREE.MeshLambertMaterial({ color })
+      : new THREE.MeshToonMaterial({ color, gradientMap: GRADIENTS[look.shading] });
     mat.userData.shared = true;
-    toonCache.set(color, mat);
+    materialCache.set(key, mat);
   }
   return mat;
 }
 
-const outlineMaterial = new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.BackSide });
-outlineMaterial.userData.shared = true;
+const outlineCache = new Map<string, THREE.MeshBasicMaterial>();
+
+function outlineMaterial(): THREE.MeshBasicMaterial {
+  let mat = outlineCache.get(look.outlineColor);
+  if (!mat) {
+    mat = new THREE.MeshBasicMaterial({ color: look.outlineColor, side: THREE.BackSide });
+    mat.userData.shared = true;
+    outlineCache.set(look.outlineColor, mat);
+  }
+  return mat;
+}
 
 export const OUTLINE_WIDTH = 0.035;
 
@@ -39,7 +64,9 @@ export const OUTLINE_WIDTH = 0.035;
  * (que engrossa o contorno em peças compridas), cada eixo cresce o necessário
  * para somar `width` de cada lado, em torno do centro da caixa da geometria.
  */
-export function addOutline(mesh: THREE.Mesh, width = OUTLINE_WIDTH): void {
+export function addOutline(mesh: THREE.Mesh, baseWidth = OUTLINE_WIDTH): void {
+  const width = baseWidth * look.outline;
+  if (width <= 0) return;
   const geo = mesh.geometry;
   if (!geo.boundingBox) geo.computeBoundingBox();
   const box = geo.boundingBox!;
@@ -50,7 +77,7 @@ export function addOutline(mesh: THREE.Mesh, width = OUTLINE_WIDTH): void {
   const sy = 1 + (2 * width) / Math.max(size.y * Math.abs(mesh.scale.y), 1e-3);
   const sz = 1 + (2 * width) / Math.max(size.z * Math.abs(mesh.scale.z), 1e-3);
 
-  const hull = new THREE.Mesh(geo, outlineMaterial);
+  const hull = new THREE.Mesh(geo, outlineMaterial());
   hull.scale.set(sx, sy, sz);
   hull.position.set(center.x * (1 - sx), center.y * (1 - sy), center.z * (1 - sz));
   hull.userData.isOutline = true;

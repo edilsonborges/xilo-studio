@@ -70,12 +70,14 @@ narrado e a narração tem ritmo regular.
 
 ## Estilos de vídeo e IA do Xilo
 
-No passo 3 você escolhe o estilo:
+No passo 3 você escolhe o estilo. Os visuais 3D ficam em `src/engine/styles.ts` (material e contorno) e o pós-processamento em `src/engine/post.ts`, um shader único na GPU.
 
 | Estilo | Como as cenas são feitas |
 |---|---|
 | **Ilustrado por IA** (xilogravura, aquarela, livro infantil, cinema) | A IA lê o roteiro, descreve uma imagem por cena com os mesmos personagens e desenha cada uma. O vídeo anima as imagens com movimento de câmera, título e legenda. Representa qualquer história, mas cada imagem leva de segundos a minutos. |
-| **3D de cordel** | Cenas montadas com um kit fixo de peças 3D (sertão, vila, floresta, vaqueiro…). Rápido, mas não desenha nada fora do kit. |
+| **3D** (30 visuais em 6 grupos: cordel e gravura, desenho e HQ, pintura, brinquedo e material, retrô e digital, cinema e clima) | Cenas montadas com um kit de peças 3D (sertão, vila, floresta, vaqueiro…) e desenhadas no visual escolhido. Rápido, dá para trocar o visual sem gerar de novo, mas não desenha nada fora do kit. |
+
+![Os 30 visuais 3D, numa cena de vila ao entardecer](docs/visuais-3d.jpg)
 
 A "IA do Xilo" roda no servidor, pelo [opencode-gateway](https://github.com/edilsonborges/opencode-gateway)
 da mesma máquina: texto com `gpt-6-luna` e imagens com `gpt-image-2`, pela
