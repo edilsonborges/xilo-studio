@@ -8,7 +8,8 @@ import type { Timeline, WordTiming } from '../types';
 import { wordKey } from '../util';
 import { buildTimeline, distribute, tokenizeScript, type ScriptToken } from './aligner';
 
-interface WhisperWord {
+/** Palavra falada com tempo: vem do Whisper ou do Edge TTS. */
+export interface WhisperWord {
   word: string;
   start: number;
   end: number;
@@ -85,7 +86,7 @@ function lcsPairs(a: string[], b: string[]): Array<[number, number]> {
 }
 
 /** Timeline a partir só da transcrição, quando o roteiro não bate com o áudio. */
-function timelineFromTranscript(heard: WhisperWord[], duration: number): Timeline {
+function timelineFromTranscript(heard: WhisperWord[], duration: number, source: Timeline['source']): Timeline {
   const tokens: ScriptToken[] = heard.map((w, i) => {
     const next = heard[i + 1];
     return { text: w.word.trim(), lineEnd: !next || next.start - w.end > 0.6 };
@@ -95,23 +96,24 @@ function timelineFromTranscript(heard: WhisperWord[], duration: number): Timelin
     start: w.start,
     end: w.end,
   }));
-  return buildTimeline(tokens, words, duration, 'whisper');
+  return buildTimeline(tokens, words, duration, source);
 }
 
 export function reconcileWithScript(
   script: string,
   heard: WhisperWord[],
   duration: number,
+  source: Timeline['source'] = 'whisper',
 ): Timeline {
   const tokens = tokenizeScript(script);
-  if (tokens.length === 0) return timelineFromTranscript(heard, duration);
+  if (tokens.length === 0) return timelineFromTranscript(heard, duration, source);
 
   const pairs = lcsPairs(
     tokens.map((t) => wordKey(t.text)),
     heard.map((w) => wordKey(w.word)),
   );
   // roteiro e narração divergem demais: confia no que foi falado
-  if (pairs.length < tokens.length * 0.5) return timelineFromTranscript(heard, duration);
+  if (pairs.length < tokens.length * 0.5) return timelineFromTranscript(heard, duration, source);
 
   const words: WordTiming[] = new Array(tokens.length);
   for (const [ti, hi] of pairs) {
@@ -133,5 +135,5 @@ export function reconcileWithScript(
     for (let k = i; k < j; k++) words[k] = filled[k - i];
     i = j;
   }
-  return buildTimeline(tokens, words, duration, 'whisper');
+  return buildTimeline(tokens, words, duration, source);
 }

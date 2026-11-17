@@ -1,6 +1,7 @@
 import './style.css';
 
 import { createTimeline, decodeAudioFile } from './audio';
+import { listVoices, narrate, type GeneratedNarration } from './audio/edge';
 import { initSession } from './auth/session';
 import { Compositor } from './compositor/compositor';
 import { directScenes } from './director';
@@ -30,6 +31,10 @@ const ui = {
   dropzone: $<HTMLLabelElement>('dropzone'),
   audioName: $('audio-name'),
   audioMeta: $('audio-meta'),
+  audioDownload: $<HTMLAnchorElement>('audio-download'),
+  ttsVoice: $<HTMLSelectElement>('tts-voice'),
+  ttsRate: $<HTMLSelectElement>('tts-rate'),
+  ttsGenerate: $<HTMLButtonElement>('tts-generate'),
   generate: $<HTMLButtonElement>('generate'),
   status: $<HTMLOListElement>('status'),
   json: $<HTMLTextAreaElement>('json'),
@@ -70,6 +75,10 @@ interface Project {
 let audioFile: File | null = null;
 let audioBuffer: AudioBuffer | null = null;
 let audioUrl: string | null = null;
+/** narração gerada pelo Edge TTS, com o tempo exato de cada palavra */
+let narrated: GeneratedNarration | null = null;
+let downloadUrl: string | null = null;
+let narrating = false;
 let project: Project | null = null;
 let busy = false;
 let exporting: AbortController | null = null;
@@ -93,7 +102,9 @@ function addStatus(message: string, kind: StatusKind = 'info'): HTMLLIElement {
 }
 
 function updateBadge(): void {
-  const stamps = settings.transcription === 'openai' && settings.openaiKey.trim() ? 'Whisper' : 'alinhador local';
+  const stamps = narrated && narrated.file === audioFile
+    ? 'Edge TTS'
+    : settings.transcription === 'openai' && settings.openaiKey.trim() ? 'Whisper' : 'alinhador local';
   const scenes = settings.llmProvider !== 'none' && llmKey(settings) ? settings.llmProvider : 'regras';
   ui.modeBadge.textContent = `Tempos: ${stamps} · Cenas: ${scenes}`;
 }
@@ -101,7 +112,8 @@ function updateBadge(): void {
 function refreshControls(): void {
   const ready = project !== null;
   const locked = busy || exporting !== null;
-  ui.generate.disabled = locked;
+  ui.generate.disabled = locked || narrating;
+  ui.ttsGenerate.disabled = locked || narrating;
   ui.play.disabled = !ready || locked;
   ui.seek.disabled = !ready || locked;
   ui.exportBtn.disabled = !ready || locked;
@@ -187,9 +199,18 @@ document.addEventListener('keydown', (ev) => {
 
 // ---------- áudio ----------
 
-async function loadAudio(file: File): Promise<void> {
+async function loadAudio(file: File, generated: GeneratedNarration | null = null): Promise<void> {
   audioFile = file;
   audioBuffer = null;
+  narrated = generated;
+  if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+  downloadUrl = generated ? URL.createObjectURL(file) : null;
+  ui.audioDownload.hidden = !downloadUrl;
+  if (downloadUrl) {
+    ui.audioDownload.href = downloadUrl;
+    ui.audioDownload.download = file.name;
+  }
+  updateBadge();
   ui.audioName.textContent = file.name;
   ui.audioMeta.textContent = 'Lendo o áudio…';
   ui.dropzone.classList.remove('loaded');
@@ -229,6 +250,59 @@ ui.dropzone.addEventListener('drop', (ev) => {
   if (file) void loadAudio(file);
 });
 
+// ---------- narração pelo Edge TTS ----------
+
+async function setupVoices(): Promise<void> {
+  ui.ttsRate.value = settings.ttsRate;
+  if (!ui.ttsRate.value) ui.ttsRate.value = '1';
+  try {
+    const { voices } = await listVoices();
+    ui.ttsVoice.replaceChildren(...voices.map((voice) => new Option(voice.label, voice.id)));
+    ui.ttsVoice.value = settings.ttsVoice;
+    if (!ui.ttsVoice.value && voices[0]) ui.ttsVoice.value = voices[0].id;
+  } catch {
+    // Sem servidor (ex.: `npm run dev:web`): some a opção de gerar a voz.
+    $('tts').hidden = true;
+    ui.ttsGenerate.closest('.field')?.querySelector('.tts-hint')?.setAttribute('hidden', '');
+  }
+}
+
+for (const select of [ui.ttsVoice, ui.ttsRate]) {
+  select.addEventListener('change', () => {
+    settings = { ...settings, ttsVoice: ui.ttsVoice.value, ttsRate: ui.ttsRate.value };
+    saveSettings(settings);
+  });
+}
+
+ui.ttsGenerate.addEventListener('click', async () => {
+  const script = ui.script.value.trim();
+  clearStatus();
+  if (!script) {
+    addStatus('Cole o roteiro antes de gerar a voz.', 'error');
+    ui.script.focus();
+    return;
+  }
+  narrating = true;
+  refreshControls();
+  ui.ttsGenerate.textContent = 'Gerando voz…';
+  const step = addStatus('Gerando a narração com o Edge TTS…');
+  try {
+    const result = await narrate(script, ui.ttsVoice.value, Number(ui.ttsRate.value) || 1);
+    await loadAudio(result.file, result);
+    step.className = 'ok';
+    step.textContent = 'Narração pronta. Agora é só gerar o vídeo.';
+  } catch (err) {
+    step.className = 'error';
+    step.textContent = (err as Error).message;
+  } finally {
+    narrating = false;
+    ui.ttsGenerate.textContent = 'Gerar voz do roteiro';
+    refreshControls();
+  }
+});
+
+void setupVoices();
+
 ui.useSample.addEventListener('click', () => {
   ui.script.value = SAMPLE_SCRIPT;
   ui.script.focus();
@@ -253,7 +327,7 @@ async function generate(): Promise<void> {
     return;
   }
   if (!audioFile) {
-    addStatus('Envie o áudio da narração antes de gerar.', 'error');
+    addStatus('Gere a voz do roteiro ou envie o áudio da narração antes de gerar o vídeo.', 'error');
     return;
   }
 
@@ -271,13 +345,14 @@ async function generate(): Promise<void> {
     step.textContent = `Áudio: ${formatTime(buffer.duration)} de duração.`;
 
     step = addStatus('Calculando os tempos de cada palavra…');
-    const timed = await createTimeline(script, file, buffer, settings);
+    const spoken = narrated && narrated.file === file ? narrated.words : undefined;
+    const timed = await createTimeline(script, file, buffer, settings, spoken);
     if (timed.warning) addStatus(timed.warning, 'warn');
     const timeline = timed.timeline;
     if (timeline.words.length === 0) throw new Error('O roteiro não tem palavras para legendar.');
     step.className = 'ok';
     step.textContent = `Tempos: ${timeline.words.length} palavras em ${timeline.sentences.length} frases (${
-      timeline.source === 'whisper' ? 'Whisper' : 'alinhador local'
+      { whisper: 'Whisper', edge: 'Edge TTS, tempo exato', local: 'alinhador local' }[timeline.source]
     }).`;
 
     const slots = splitScenes(timeline);

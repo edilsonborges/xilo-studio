@@ -4,8 +4,9 @@ import { join, posix } from 'node:path';
 import { z } from 'zod';
 import { loadConfig, validateConfig, type ServerConfig } from './config.js';
 import { createResendMailer, inviteEmail, resetEmail, type Mailer } from './mailer.js';
+import { VOICES, edgeNarrator, type Narrator } from './narration.js';
 import { validPasswordInput } from './password.js';
-import { AuthStore, SESSION_TTL, invalidCredentials, type TokenPurpose, type User } from './store.js';
+import { AuthStore, NARRATION_LIMIT, SESSION_TTL, invalidCredentials, type TokenPurpose, type User } from './store.js';
 
 // Mesma política que o nginx usava: o app só conversa com o próprio site e com as
 // APIs de IA, porque as chaves do usuário ficam no localStorage.
@@ -35,6 +36,12 @@ const checkTokenSchema = z.object({ token: linkTokenSchema }).strict();
 const setPasswordSchema = z.object({ token: linkTokenSchema, password: newPasswordSchema }).strict();
 const createUserSchema = z.object({ name: z.string().trim().min(1).max(80), email: emailSchema }).strict();
 const userIdSchema = z.string().uuid();
+const MAX_NARRATION_CHARS = 6_000;
+const narrationSchema = z.object({
+  text: z.string().trim().min(1).max(MAX_NARRATION_CHARS),
+  voice: z.enum(VOICES.map((voice) => voice.id) as [string, ...string[]]),
+  rate: z.number().min(0.5).max(2),
+}).strict();
 
 /** Arquivos que a tela de login precisa: os únicos liberados sem sessão. */
 function loginShellFiles(distPath: string): Set<string> {
@@ -73,6 +80,8 @@ export interface AppOptions {
   mailer?: Mailer | null;
   /** Envio em segundo plano ("esqueci a senha"); os testes aguardam por aqui. */
   onBackgroundTask?: (task: Promise<void>) => void;
+  /** Gera a narração; os testes trocam pelo falso. */
+  narrator?: Narrator;
 }
 
 export function createApp(options: AppOptions = {}): express.Express {
@@ -163,7 +172,10 @@ export function createApp(options: AppOptions = {}): express.Express {
     }
     next();
   });
-  app.use('/api', express.json({ limit: '4kb', strict: true, inflate: false }));
+  const smallJson = express.json({ limit: '4kb', strict: true, inflate: false });
+  // O roteiro da narração pode ser longo; o resto da API recebe só alguns campos.
+  const scriptJson = express.json({ limit: '64kb', strict: true, inflate: false });
+  app.use('/api', (req, res, next) => (req.path === '/narration' ? scriptJson : smallJson)(req, res, next));
 
   app.get('/api/auth/me', (req, res) => {
     res.json({ user: sessionUser(req, res), emailEnabled: Boolean(mailer) });
@@ -244,6 +256,52 @@ export function createApp(options: AppOptions = {}): express.Express {
     }
     startSession(res, result.token);
     res.json({ user: result.user });
+  });
+
+  // ---- Narração com Edge TTS (qualquer pessoa logada) ----
+
+  const narrator = options.narrator ?? edgeNarrator;
+
+  function requireUser(req: Request, res: Response, next: NextFunction): void {
+    const user = sessionUser(req, res);
+    if (!user) {
+      res.status(401).json({ error: 'Sua sessão expirou. Entre de novo.' });
+      return;
+    }
+    res.locals.user = user;
+    next();
+  }
+
+  app.get('/api/narration/voices', requireUser, (_req, res) => {
+    res.json({ voices: VOICES, maxChars: MAX_NARRATION_CHARS });
+  });
+
+  app.post('/api/narration', requireUser, async (req, res) => {
+    const parsed = narrationSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const tooLong = parsed.error.issues.some((issue) => issue.path[0] === 'text' && issue.code === 'too_big');
+      res.status(400).json({
+        error: tooLong ? `O roteiro passa de ${MAX_NARRATION_CHARS} caracteres.` : 'Confira o roteiro, a voz e a velocidade.',
+      });
+      return;
+    }
+    const user = res.locals.user as User;
+    const blocked = store.reserve([{ key: `narration:${user.id}`, max: NARRATION_LIMIT }], now());
+    if (blocked) {
+      failure(res, blocked);
+      return;
+    }
+    try {
+      const { audio, words } = await narrator({
+        text: parsed.data.text,
+        voice: parsed.data.voice as (typeof VOICES)[number]['id'],
+        rate: parsed.data.rate,
+      });
+      res.json({ audio: audio.toString('base64'), mimeType: 'audio/mpeg', words });
+    } catch (error) {
+      console.error(`Falha no Edge TTS: ${error instanceof Error ? error.message : 'erro desconhecido'}`);
+      res.status(502).json({ error: 'O Edge TTS não respondeu. Tente de novo em instantes ou envie um áudio seu.' });
+    }
   });
 
   // ---- Painel de usuários (só administradores) ----

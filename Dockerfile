@@ -29,7 +29,8 @@ ENV NODE_ENV=production \
     DIST_PATH=/app/dist
 COPY --from=runtime-dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node package.json package-lock.json ./
-COPY --chown=node:node server/app.ts server/config.ts server/index.ts server/mailer.ts server/password.ts server/store.ts ./server/
+# a pasta inteira: os testes ficam de fora pelo .dockerignore
+COPY --chown=node:node server ./server
 COPY --from=build --chown=node:node /app/dist ./dist
 RUN mkdir -p /app/data && chown node:node /app/data
 USER node

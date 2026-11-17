@@ -3,7 +3,7 @@
 import type { Settings } from '../settings';
 import type { Timeline } from '../types';
 import { alignLocal, detectSpeechBounds } from './aligner';
-import { reconcileWithScript, transcribeWithWhisper } from './whisper';
+import { reconcileWithScript, transcribeWithWhisper, type WhisperWord } from './whisper';
 
 export interface TimelineResult {
   timeline: Timeline;
@@ -31,8 +31,11 @@ export async function createTimeline(
   file: File,
   buffer: AudioBuffer,
   settings: Settings,
+  /** tempos exatos de cada palavra, quando a narração veio do Edge TTS */
+  spoken?: WhisperWord[],
 ): Promise<TimelineResult> {
   const duration = buffer.duration;
+  if (spoken?.length) return { timeline: reconcileWithScript(script, spoken, duration, 'edge') };
   const local = (): Timeline => {
     const [from, to] = detectSpeechBounds(buffer);
     return alignLocal(script, duration, from, to);

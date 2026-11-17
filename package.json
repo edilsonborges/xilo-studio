@@ -21,6 +21,7 @@
     "better-sqlite3": "^13.2.0",
     "dotenv": "^18.0.10",
     "express": "^5.3.0",
+    "msedge-tts": "^2.1.1",
     "three": "^0.187.0",
     "tsx": "^4.23.15",
     "zod": "^4.6.7"
@@ -32,7 +33,6 @@
     "@types/supertest": "^7.2.1",
     "@types/three": "^0.187.0",
     "concurrently": "^10.0.7",
-    "msedge-tts": "^2.1.1",
     "supertest": "^7.3.2",
     "typescript": "^7.0.2",
     "vite": "^8.3.8"

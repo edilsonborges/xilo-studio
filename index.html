@@ -47,12 +47,26 @@
           </div>
 
           <div class="field">
-            <div class="field-head"><label for="audio">2. Narração (.mp3 ou .wav)</label></div>
+            <div class="field-head"><label for="tts-voice">2. Narração</label></div>
+            <div class="tts" id="tts">
+              <select id="tts-voice" aria-label="Voz da narração"></select>
+              <select id="tts-rate" aria-label="Velocidade da fala">
+                <option value="0.85">Mais lenta</option>
+                <option value="0.95">Um pouco lenta</option>
+                <option value="1">Normal</option>
+                <option value="1.1">Um pouco rápida</option>
+                <option value="1.2">Mais rápida</option>
+              </select>
+              <button class="btn" id="tts-generate" type="button">Gerar voz do roteiro</button>
+            </div>
+            <p class="hint tts-hint">Voz neural do Edge TTS, sem chave. A legenda acompanha cada palavra no tempo exato.</p>
+            <p class="or"><span>ou envie seu áudio (.mp3 ou .wav)</span></p>
             <label class="dropzone" id="dropzone" for="audio">
               <input id="audio" type="file" accept="audio/mpeg,audio/wav,audio/x-wav,audio/*,.mp3,.wav" />
               <strong id="audio-name">Clique ou arraste o áudio</strong>
               <span id="audio-meta">O arquivo não sai do seu navegador</span>
             </label>
+            <a class="link" id="audio-download" hidden>Baixar a narração (.mp3)</a>
           </div>
 
           <button class="btn btn-primary btn-big" id="generate" type="button">Gerar vídeo</button>

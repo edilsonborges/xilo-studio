@@ -532,3 +532,46 @@ code {
     transition: none;
   }
 }
+
+/* Narração pelo Edge TTS */
+
+.tts {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr auto;
+  gap: 10px;
+}
+
+.tts-hint {
+  margin: 6px 0 0;
+}
+
+.or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.or::before,
+.or::after {
+  content: '';
+  flex: 1;
+  border-top: 2px solid rgba(23, 17, 13, 0.15);
+}
+
+#audio-download {
+  display: inline-block;
+  margin-top: 8px;
+}
+
+#audio-download[hidden] {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .tts {
+    grid-template-columns: 1fr;
+  }
+}

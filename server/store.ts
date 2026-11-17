@@ -13,6 +13,8 @@ export const LOGIN_IP_LIMIT = 100;
 export const RESET_EMAIL_LIMIT = 3;
 export const RESET_IP_LIMIT = 20;
 export const TOKEN_IP_LIMIT = 30;
+/** Narrações por pessoa a cada 15 minutos (o Edge TTS é um serviço gratuito e não oficial). */
+export const NARRATION_LIMIT = 20;
 
 export type TokenPurpose = 'invite' | 'reset';
 

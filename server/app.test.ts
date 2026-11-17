@@ -7,7 +7,8 @@ import request from 'supertest';
 import { createApp } from './app.js';
 import type { ServerConfig } from './config.js';
 import type { Email, Mailer } from './mailer.js';
-import { LOGIN_EMAIL_LIMIT } from './store.js';
+import type { Narrator } from './narration.js';
+import { LOGIN_EMAIL_LIMIT, NARRATION_LIMIT } from './store.js';
 
 const ORIGIN = 'http://localhost:5173';
 const ADMIN = 'admin@example.com';
@@ -30,7 +31,7 @@ function writeDist(dist: string): void {
   }));
 }
 
-function setup(t: TestContext, mailer: Mailer | null = null) {
+function setup(t: TestContext, mailer: Mailer | null = null, narrator?: Narrator) {
   const dir = mkdtempSync(join(tmpdir(), 'xilo-test-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeDist(join(dir, 'dist'));
@@ -50,6 +51,7 @@ function setup(t: TestContext, mailer: Mailer | null = null) {
     config,
     mailer: mailer === null ? async (message) => { sent.push(message); } : mailer,
     onBackgroundTask: (task) => pending.push(task),
+    narrator,
   });
   t.after(() => app.locals.close());
   const flush = () => Promise.all(pending.splice(0));
@@ -213,4 +215,47 @@ test('sem Resend configurado, "esqueci a senha" avisa que está indisponível', 
   await request(app).post('/api/auth/password/forgot').set('Origin', ORIGIN).send({ email: ADMIN }).expect(503);
   const me = await request(app).get('/api/auth/me').expect(200);
   assert.equal(me.body.emailEnabled, false);
+});
+
+test('narração: só para quem está logado, devolve o mp3 e o tempo de cada palavra', async (t) => {
+  const calls: unknown[] = [];
+  const { app, sent, flush } = setup(t, null, async (request) => {
+    calls.push(request);
+    return { audio: Buffer.from('mp3-falso'), words: [{ word: 'Olá', start: 0.1, end: 0.4 }] };
+  });
+  const body = { text: 'Olá, sertão.', voice: 'pt-BR-FranciscaNeural', rate: 1.1 };
+  await request(app).get('/api/narration/voices').expect(401);
+  await request(app).post('/api/narration').set('Origin', ORIGIN).send(body).expect(401);
+
+  const agent = await adminAgent(app, sent, flush);
+  const voices = await agent.get('/api/narration/voices').expect(200);
+  assert.ok(voices.body.voices.some((voice: { id: string }) => voice.id === 'pt-BR-AntonioNeural'));
+
+  const result = await agent.post('/api/narration').set('Origin', ORIGIN).send(body).expect(200);
+  assert.equal(Buffer.from(result.body.audio, 'base64').toString(), 'mp3-falso');
+  assert.equal(result.body.mimeType, 'audio/mpeg');
+  assert.deepEqual(result.body.words, [{ word: 'Olá', start: 0.1, end: 0.4 }]);
+  assert.deepEqual(calls, [body]);
+
+  // Roteiro longo passa do limite de 4 KiB das outras rotas, mas não do da narração.
+  await agent.post('/api/narration').set('Origin', ORIGIN).send({ ...body, text: 'a'.repeat(5_000) }).expect(200);
+  await agent.post('/api/narration').set('Origin', ORIGIN).send({ ...body, text: 'a'.repeat(6_001) }).expect(400);
+  await agent.post('/api/narration').set('Origin', ORIGIN).send({ ...body, voice: 'en-US-GuyNeural' }).expect(400);
+  await agent.post('/api/narration').set('Origin', ORIGIN).send({ ...body, rate: 5 }).expect(400);
+  await agent.post('/api/narration').set('Origin', 'https://evil.example').send(body).expect(403);
+});
+
+test('narração: falha do Edge TTS vira 502 e há limite por pessoa', async (t) => {
+  let fail = true;
+  const { app, sent, flush } = setup(t, null, async () => {
+    if (fail) throw new Error('fora do ar');
+    return { audio: Buffer.from('x'), words: [] };
+  });
+  const agent = await adminAgent(app, sent, flush);
+  const body = { text: 'Teste.', voice: 'pt-BR-AntonioNeural', rate: 1 };
+  const failed = await agent.post('/api/narration').set('Origin', ORIGIN).send(body).expect(502);
+  assert.match(failed.body.error, /Edge TTS/);
+  fail = false;
+  for (let i = 1; i < NARRATION_LIMIT; i++) await agent.post('/api/narration').set('Origin', ORIGIN).send(body).expect(200);
+  await agent.post('/api/narration').set('Origin', ORIGIN).send(body).expect(429);
 });

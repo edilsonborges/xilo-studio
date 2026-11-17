@@ -70,8 +70,16 @@ narrado e a narração tem ritmo regular.
 
 ## Gerar a narração com o Edge TTS
 
-Se você não tem uma narração gravada, o script `narrar` cria uma com as vozes
-neurais do Microsoft Edge (Read Aloud). Não precisa de chave nem de conta.
+Se você não tem uma narração gravada, o Xilo cria uma com as vozes neurais do
+Microsoft Edge (Read Aloud). Não precisa de chave nem de conta.
+
+**No app:** no passo 2, escolha a voz e a velocidade e clique em **Gerar voz do
+roteiro**. O servidor do Xilo chama o Edge TTS e devolve o `.mp3` junto com o
+tempo exato de cada palavra, então a legenda não depende do alinhador nem do
+Whisper. Dá para baixar o `.mp3` gerado. Limite: 6.000 caracteres por roteiro e
+20 narrações a cada 15 minutos por pessoa.
+
+**No terminal:** o script `narrar` faz o mesmo e salva o arquivo.
 
 ```bash
 npm run narrar -- roteiro.txt
@@ -90,9 +98,10 @@ arquivo no app junto com o mesmo roteiro.
 | `pt-BR-FranciscaNeural` | feminina |
 | `pt-BR-ThalitaMultilingualNeural` | feminina, multilíngue |
 
-O script roda em Node, fora do app: o serviço do Edge só aceita conexões com a
-identificação do navegador Edge, então não dá para chamá-lo de dentro da página.
-É um serviço não oficial da Microsoft e pode mudar sem aviso.
+A síntese roda sempre em Node (no servidor do Xilo ou no script): o serviço do
+Edge só aceita conexões com a identificação do navegador Edge, então a página
+não consegue chamá-lo direto. É um serviço não oficial da Microsoft e pode mudar
+sem aviso; se ele falhar, envie um áudio seu.
 
 ## Chaves de API
 

@@ -106,7 +106,7 @@ export interface Timeline {
   duration: number;
   words: WordTiming[];
   sentences: SentenceTiming[];
-  source: 'whisper' | 'local';
+  source: 'whisper' | 'edge' | 'local';
 }
 
 // ---------- Módulo 2: fatias de cena ----------

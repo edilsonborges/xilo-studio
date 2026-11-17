@@ -14,6 +14,9 @@ export interface Settings {
   geminiModel: string;
   anthropicModel: string;
   captionAccent: string;
+  /** voz e velocidade da narração gerada pelo Edge TTS */
+  ttsVoice: string;
+  ttsRate: string;
 }
 
 const STORAGE_KEY = 'xilo.settings.v1';
@@ -30,6 +33,8 @@ export const DEFAULT_SETTINGS: Settings = {
   geminiModel: env.VITE_GEMINI_MODEL || 'gemini-2.5-flash',
   anthropicModel: env.VITE_ANTHROPIC_MODEL || 'claude-opus-5-5',
   captionAccent: '#d8432b',
+  ttsVoice: 'pt-BR-AntonioNeural',
+  ttsRate: '1',
 };
 
 export function loadSettings(): Settings {
