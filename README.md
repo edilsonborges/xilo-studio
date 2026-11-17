@@ -44,6 +44,7 @@ Outros comandos:
 npm run build      # checa os tipos e gera o site estático em dist/
 npm run preview    # serve o build de produção localmente
 npm run typecheck  # só a checagem de tipos
+npm run narrar     # gera a narração com o Edge TTS (veja abaixo)
 ```
 
 ## Exemplo de uso
@@ -63,6 +64,32 @@ quebram a renderização.
 Dica: sem Whisper, o alinhador local distribui as palavras do roteiro pela
 duração da fala. Ele funciona melhor quando o roteiro é exatamente o texto
 narrado e a narração tem ritmo regular.
+
+## Gerar a narração com o Edge TTS
+
+Se você não tem uma narração gravada, o script `narrar` cria uma com as vozes
+neurais do Microsoft Edge (Read Aloud). Não precisa de chave nem de conta.
+
+```bash
+npm run narrar -- roteiro.txt
+npm run narrar -- roteiro.txt --voz pt-BR-FranciscaNeural --saida narracao.mp3
+npm run narrar -- roteiro.txt --velocidade 0.95 --tom -5Hz
+npm run narrar -- --vozes          # lista as vozes pt-BR
+npm run narrar -- --vozes en-US    # lista as vozes de outro idioma
+```
+
+O resultado é um `.mp3` (padrão: `narracao.mp3`, ignorado pelo git). Envie esse
+arquivo no app junto com o mesmo roteiro.
+
+| Voz pt-BR | Timbre |
+|---|---|
+| `pt-BR-AntonioNeural` (padrão) | masculina |
+| `pt-BR-FranciscaNeural` | feminina |
+| `pt-BR-ThalitaMultilingualNeural` | feminina, multilíngue |
+
+O script roda em Node, fora do app: o serviço do Edge só aceita conexões com a
+identificação do navegador Edge, então não dá para chamá-lo de dentro da página.
+É um serviço não oficial da Microsoft e pode mudar sem aviso.
 
 ## Chaves de API
 
@@ -230,6 +257,83 @@ mostra sempre o mesmo frame para o mesmo instante.
   `targetPosition` ao longo da cena.
 - `color` em props é opcional: sem ele, vale a paleta do preset.
 - O mesmo `id` de personagem mantém cores e acessório em todas as cenas.
+
+## Publicar (Docker + túnel do Cloudflare)
+
+O Xilo é um site estático: o build gera `dist/` e um nginx serve os arquivos.
+Não há backend, banco nem variável de ambiente obrigatória.
+
+| Arquivo | Papel |
+|---|---|
+| `Dockerfile` | build com Node 22 (`npm ci` + `npm run build`) e imagem final nginx |
+| `deploy/nginx.conf` | porta 47653, cache, CSP e `/healthz` |
+| `docker-compose.yml` | serviço `xilo-studio`, exposto só em `127.0.0.1:47653` |
+| `scripts/update.sh` | atualiza, reconstrói e confere o `/healthz` |
+
+### 1. Subir o container
+
+Na máquina que vai hospedar (com Docker e o repositório clonado):
+
+```bash
+docker compose up -d --build
+curl http://127.0.0.1:47653/healthz   # deve responder "ok"
+```
+
+A porta fica presa em `127.0.0.1` de propósito: quem expõe o app para a
+internet é o túnel, não a porta da máquina.
+
+### 2. Apontar o túnel do Cloudflare
+
+O túnel leva um hostname público (por exemplo `xilo.seudominio.dev`) até
+`http://localhost:47653`. Use o caminho que corresponde ao seu túnel.
+
+**Túnel gerenciado pelo painel (Zero Trust):**
+
+1. Abra Zero Trust → Networks → Tunnels e escolha o túnel da máquina.
+2. Em Public Hostname, adicione um hostname.
+3. Subdomínio `xilo`, domínio o seu, tipo `HTTP`, URL `localhost:47653`.
+4. Salve. O Cloudflare cria o registro DNS sozinho.
+
+**Túnel gerenciado por arquivo (`~/.cloudflared/config.yml`):**
+
+```yaml
+ingress:
+  - hostname: xilo.seudominio.dev
+    service: http://localhost:47653
+  # ...outros hostnames...
+  - service: http_status:404
+```
+
+```bash
+cloudflared tunnel route dns <nome-do-tunel> xilo.seudominio.dev
+# reinicie o serviço do cloudflared para ele ler o config novo
+```
+
+Se o `cloudflared` roda em container, e não direto na máquina, `localhost`
+aponta para o container dele. Nesse caso use `http://host.docker.internal:47653`
+ou coloque os dois serviços na mesma rede Docker.
+
+O HTTPS do Cloudflare é necessário de qualquer forma: fora de `localhost`, o
+navegador só libera gravação e áudio em página segura.
+
+### 3. Atualizar depois
+
+```bash
+./scripts/update.sh            # última versão da main
+./scripts/update.sh <commit>   # um commit específico, ou para voltar atrás
+```
+
+O script se recusa a rodar com alterações locais, reconstrói o container e
+espera o `/healthz`. Se algo falhar, ele mostra o comando para voltar à versão
+anterior. Defina `XILO_HEALTH_URL` se a porta local for outra.
+
+### Sobre a CSP
+
+O nginx envia uma Content-Security-Policy que só permite conexões para o
+próprio site e para as APIs da OpenAI, do Gemini e da Anthropic. Como as chaves
+ficam no `localStorage`, isso reduz o estrago se algum script indevido rodar na
+página. Se você adicionar outro provedor, inclua o domínio dele em
+`connect-src` no `deploy/nginx.conf`.
 
 ## Limitações conhecidas
 
