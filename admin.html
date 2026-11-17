@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Usuários · Xilo Studio</title>
+  </head>
+  <body>
+    <div class="admin">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">X</span>
+          <div>
+            <h1>Usuários</h1>
+            <p>Quem pode entrar no Xilo</p>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <a class="btn" href="/">Voltar ao Xilo</a>
+          <button class="btn" id="logout" type="button">Sair</button>
+        </div>
+      </header>
+
+      <p class="auth-error" id="mail-off" role="alert" hidden>
+        O envio de e-mail está desligado: falta a RESEND_API_KEY no servidor. Dá para cadastrar
+        pessoas, mas o convite só sai depois que a chave for configurada.
+      </p>
+
+      <form class="panel" id="invite-form" novalidate>
+        <h2>Convidar pessoa</h2>
+        <p class="hint">A pessoa recebe um e-mail com um link para criar a própria senha. O link vale por 7 dias.</p>
+        <div class="admin-invite">
+          <label>Nome
+            <input name="name" type="text" maxlength="80" autocomplete="off" required />
+          </label>
+          <label>E-mail
+            <input name="email" type="email" autocomplete="off" required />
+          </label>
+          <button class="btn btn-primary" type="submit">Convidar</button>
+        </div>
+        <p class="auth-error" role="alert" hidden></p>
+        <p class="auth-ok" role="status" hidden></p>
+      </form>
+
+      <section class="panel">
+        <h2>Contas</h2>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr><th>Nome</th><th>E-mail</th><th>Situação</th><th>Último acesso</th><th></th></tr>
+            </thead>
+            <tbody id="users"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <script type="module" src="/src/admin.ts"></script>
+  </body>
+</html>

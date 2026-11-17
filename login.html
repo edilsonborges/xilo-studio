@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Entrar · Xilo Studio</title>
+  </head>
+  <body>
+    <main class="auth">
+      <div class="brand auth-brand">
+        <span class="brand-mark" aria-hidden="true">X</span>
+        <div>
+          <h1>Xilo</h1>
+          <p>Acesso restrito</p>
+        </div>
+      </div>
+
+      <form class="panel auth-card" id="login-form" novalidate>
+        <h2>Entrar</h2>
+        <label>E-mail
+          <input name="email" type="email" autocomplete="username" required />
+        </label>
+        <label>Senha
+          <input name="password" type="password" autocomplete="current-password" required />
+        </label>
+        <p class="auth-error" role="alert" hidden></p>
+        <button class="btn btn-primary btn-big" type="submit">Entrar</button>
+        <button class="link" type="button" data-go="forgot">Esqueci minha senha / primeiro acesso</button>
+      </form>
+
+      <form class="panel auth-card" id="forgot-form" novalidate hidden>
+        <h2>Receber link de senha</h2>
+        <p class="hint">Informe seu e-mail. Se ele tiver acesso ao Xilo, enviamos um link para criar ou trocar a senha.</p>
+        <label>E-mail
+          <input name="email" type="email" autocomplete="username" required />
+        </label>
+        <p class="auth-error" role="alert" hidden></p>
+        <p class="auth-ok" role="status" hidden></p>
+        <button class="btn btn-primary btn-big" type="submit">Enviar link</button>
+        <button class="link" type="button" data-go="login">Voltar para o login</button>
+      </form>
+
+      <form class="panel auth-card" id="set-form" novalidate hidden>
+        <h2 id="set-title">Criar senha</h2>
+        <p class="hint" id="set-hint"></p>
+        <input name="username" type="email" autocomplete="username" hidden />
+        <label>Nova senha (mínimo 8 caracteres)
+          <input name="password" type="password" autocomplete="new-password" minlength="8" required />
+        </label>
+        <label>Repita a senha
+          <input name="confirm" type="password" autocomplete="new-password" minlength="8" required />
+        </label>
+        <p class="auth-error" role="alert" hidden></p>
+        <button class="btn btn-primary btn-big" type="submit">Salvar e entrar</button>
+        <button class="link" type="button" data-go="forgot">Pedir um link novo</button>
+      </form>
+    </main>
+
+    <script type="module" src="/src/login.ts"></script>
+  </body>
+</html>

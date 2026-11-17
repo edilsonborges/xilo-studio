@@ -1,0 +1,149 @@
+/* Login e painel de usuários, no mesmo visual de cordel do app. */
+
+.auth {
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 48px 16px;
+  display: grid;
+  gap: 24px;
+}
+
+.auth-brand {
+  justify-content: center;
+}
+
+.auth-card {
+  display: grid;
+  gap: 14px;
+}
+
+.auth-card h2,
+.admin h2 {
+  margin: 0;
+  font: 900 24px/1.1 Georgia, 'Times New Roman', serif;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.auth-card label,
+.admin-invite label {
+  display: grid;
+  gap: 6px;
+  font-weight: 700;
+}
+
+.auth-card input,
+.admin-invite input {
+  font: inherit;
+  padding: 10px 12px;
+  border: var(--border);
+  border-radius: 8px;
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+.auth-card .link {
+  justify-self: center;
+}
+
+.auth-error,
+.auth-ok {
+  margin: 0;
+  padding: 10px 12px;
+  border: 2px solid currentColor;
+  border-radius: 8px;
+  font-weight: 700;
+}
+
+.auth-error {
+  color: var(--accent);
+}
+
+.auth-ok {
+  color: var(--ok);
+}
+
+.session {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.session-name {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.admin {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 20px 16px 40px;
+  display: grid;
+  gap: 20px;
+}
+
+.admin-invite {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.admin-table-wrap {
+  overflow-x: auto;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+.admin-table th,
+.admin-table td {
+  text-align: left;
+  padding: 10px 8px;
+  border-bottom: 2px solid rgba(23, 17, 13, 0.15);
+  vertical-align: middle;
+}
+
+.admin-table th {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.admin-table td.actions {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.admin-table td.actions .btn + .btn {
+  margin-left: 8px;
+}
+
+.tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--paper-2);
+}
+
+.tag-admin {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.tag-wait {
+  border-style: dashed;
+}
+
+@media (max-width: 640px) {
+  .admin-invite {
+    grid-template-columns: 1fr;
+  }
+}

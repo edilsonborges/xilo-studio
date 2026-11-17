@@ -1,6 +1,7 @@
 import './style.css';
 
 import { createTimeline, decodeAudioFile } from './audio';
+import { initSession } from './auth/session';
 import { Compositor } from './compositor/compositor';
 import { directScenes } from './director';
 import { splitScenes } from './director/splitter';
@@ -436,3 +437,5 @@ if (import.meta.env.DEV) {
     },
   });
 }
+
+void initSession();

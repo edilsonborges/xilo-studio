@@ -27,22 +27,25 @@ destaca a palavra falada, sincronizado com a narração e pronto para exportar.
 
 ## Instalar e rodar
 
-Requer Node.js 20.19+ (ou 22.12+).
+Requer Node.js 22.12+.
 
 ```bash
 git clone https://github.com/edilsonborges/xilo-studio.git
 cd xilo-studio
 npm install
-npm run dev
+cp .env.example .env   # preencha ADMIN_EMAILS (e RESEND_API_KEY para enviar e-mails)
+npm run dev            # servidor de contas + Vite
 ```
 
-Abra o endereço que o Vite mostrar (por padrão `http://localhost:5173`).
+Abra `http://localhost:5173/login`. Sem `RESEND_API_KEY`, o link de senha não é
+enviado; para testar o app sem login, use `npm run dev:web` (só o Vite).
 
 Outros comandos:
 
 ```bash
-npm run build      # checa os tipos e gera o site estático em dist/
-npm run preview    # serve o build de produção localmente
+npm run build      # checa os tipos (app e servidor) e gera dist/
+npm test           # testes do servidor de contas
+npm run check      # testes + build
 npm run typecheck  # só a checagem de tipos
 npm run narrar     # gera a narração com o Edge TTS (veja abaixo)
 ```
@@ -95,8 +98,8 @@ identificação do navegador Edge, então não dá para chamá-lo de dentro da p
 
 As chaves são digitadas em **Configurações**, dentro do app. Elas ficam apenas
 no `localStorage` do seu navegador e são enviadas somente para a API do
-provedor escolhido. Nada vai para o repositório nem para servidor do Xilo
-(não existe servidor).
+provedor escolhido. Nada vai para o repositório nem para o servidor do Xilo,
+que só cuida das contas de acesso.
 
 | Campo | Para que serve |
 |---|---|
@@ -260,21 +263,38 @@ mostra sempre o mesmo frame para o mesmo instante.
 
 ## Publicar (Docker + túnel do Cloudflare)
 
-O Xilo é um site estático: o build gera `dist/` e um nginx serve os arquivos.
-Não há backend, banco nem variável de ambiente obrigatória.
+O Xilo só abre para quem tem conta. Um servidor Node (Express + SQLite) exige
+login, serve o `dist/` do Vite e manda convites e links de senha pelo Resend.
+O vídeo continua sendo gerado inteiro no navegador.
 
 | Arquivo | Papel |
 |---|---|
-| `Dockerfile` | build com Node 22 (`npm ci` + `npm run build`) e imagem final nginx |
-| `deploy/nginx.conf` | porta 47653, cache, CSP e `/healthz` |
-| `docker-compose.yml` | serviço `xilo-studio`, exposto só em `127.0.0.1:47653` |
+| `Dockerfile` | build com Node 22 (`npm ci` + `npm run build`) e imagem final com o servidor |
+| `server/` | login, sessões, painel de usuários, CSP e `/healthz` |
+| `docker-compose.yml` | serviço `xilo-studio`, exposto só em `127.0.0.1:47653`, banco no volume `xilo_data` |
+| `.env` | `ADMIN_EMAILS`, `RESEND_API_KEY` e `RESEND_FROM` (copie de `.env.example`; fica fora do Git) |
 | `scripts/update.sh` | atualiza, reconstrói e confere o `/healthz` |
+
+### Contas e acesso
+
+- Não há cadastro aberto. Quem entra é convidado por um administrador em `/admin`.
+- Administradores são os e-mails de `ADMIN_EMAILS`. No primeiro acesso, use
+  **Esqueci minha senha / primeiro acesso** na tela de login: o link chega por e-mail.
+- O convite vale 7 dias; o link de "esqueci a senha", 1 hora. Cada link funciona
+  uma vez, e pedir outro invalida o anterior.
+- Remover alguém no painel derruba as sessões dessa pessoa na hora.
+- Senhas são guardadas com scrypt; sessões duram 30 dias (cookie `HttpOnly`).
+- Sem `RESEND_API_KEY` o login continua funcionando, mas nenhum e-mail sai.
+- A chave do Resend fica só no `.env` da máquina que roda o container. Não use
+  secret do GitHub para ela: o deploy é feito na própria máquina, não por Actions.
 
 ### 1. Subir o container
 
 Na máquina que vai hospedar (com Docker e o repositório clonado):
 
 ```bash
+cp .env.example .env    # preencha ADMIN_EMAILS e RESEND_API_KEY
+chmod 600 .env
 docker compose up -d --build
 curl http://127.0.0.1:47653/healthz   # deve responder "ok"
 ```
@@ -329,11 +349,11 @@ anterior. Defina `XILO_HEALTH_URL` se a porta local for outra.
 
 ### Sobre a CSP
 
-O nginx envia uma Content-Security-Policy que só permite conexões para o
+O servidor envia uma Content-Security-Policy que só permite conexões para o
 próprio site e para as APIs da OpenAI, do Gemini e da Anthropic. Como as chaves
 ficam no `localStorage`, isso reduz o estrago se algum script indevido rodar na
 página. Se você adicionar outro provedor, inclua o domínio dele em
-`connect-src` no `deploy/nginx.conf`.
+`connect-src` no `server/app.ts`.
 
 ## Limitações conhecidas
 

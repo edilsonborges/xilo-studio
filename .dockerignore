@@ -2,8 +2,12 @@
 !package.json
 !package-lock.json
 !index.html
+!login.html
+!admin.html
+!tsconfig.server.json
+!server
+server/*.test.ts
 !tsconfig.json
 !vite.config.ts
 !src
 !public
-!deploy/nginx.conf
