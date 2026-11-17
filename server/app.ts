@@ -526,9 +526,12 @@ export function createApp(options: AppOptions = {}): express.Express {
       page('admin.html')(req, res, next);
     });
 
-    app.get('/favicon.svg', (_req, res, next) => {
-      res.sendFile(join(config.distPath, 'favicon.svg'), { maxAge: '1d' }, (error) => { if (error) next(error); });
-    });
+    // Ícone e imagem de prévia (WhatsApp, redes): públicos, sem login.
+    for (const file of ['favicon.svg', 'og.jpg']) {
+      app.get(`/${file}`, (_req, res, next) => {
+        res.sendFile(join(config.distPath, file), { maxAge: '1d' }, (error) => { if (error) next(error); });
+      });
+    }
 
     const assets = express.static(join(config.distPath, 'assets'), {
       index: false, dotfiles: 'deny', fallthrough: false, immutable: true, maxAge: '1y',

@@ -575,3 +575,15 @@ code {
     grid-template-columns: 1fr;
   }
 }
+
+/* Versão do app, ao lado do subtítulo */
+.app-version {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 7px;
+  border: 1.5px solid var(--muted);
+  border-radius: 999px;
+  font: 700 11px/1.6 ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  color: var(--muted);
+  vertical-align: 1px;
+}

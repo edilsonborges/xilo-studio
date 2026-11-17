@@ -381,6 +381,21 @@ ficam no `localStorage`, isso reduz o estrago se algum script indevido rodar na
 página. Se você adicionar outro provedor, inclua o domínio dele em
 `connect-src` no `server/app.ts`.
 
+## Versões e entregas
+
+A versão fica em `VERSION` (igual ao `package.json`) e aparece no topo do app.
+Cada versão tem uma entrada no [CHANGELOG.md](CHANGELOG.md) e uma release no
+GitHub com as mesmas notas.
+
+Cada entrega segue: **issue → branch → testes → PR (CI verde) → merge → tag →
+release → deploy**.
+
+```bash
+./scripts/check-version.sh        # versões iguais e entrada no changelog
+git tag v0.1.0 && git push origin v0.1.0   # publica a release pelo GitHub Actions
+./scripts/update.sh               # deploy da main nesta máquina
+```
+
 ## Limitações conhecidas
 
 - A exportação é em tempo real: um vídeo de 60 s leva 60 s. Mantenha a aba

@@ -1,4 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { defineConfig, type Plugin } from 'vite';
+
+// A versão do package.json aparece no app (%VITE_APP_VERSION% no HTML).
+process.env.VITE_APP_VERSION = JSON.parse(readFileSync('package.json', 'utf8')).version;
 
 // No dev, /login e /admin abrem as páginas como no servidor de produção.
 const cleanUrls: Plugin = {
