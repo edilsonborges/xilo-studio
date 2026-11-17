@@ -4,6 +4,26 @@ Todas as mudanças relevantes do Xilo Studio ficam registradas aqui. O formato
 segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões
 seguem o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.4.0] - 2026-11-17
+
+### Adicionado
+
+- 12 ações novas para os personagens 3D: escutar, espantar-se, rir, chorar,
+  concordar, negar, pensar, carregar, trabalhar (enxada), comer, abraçar e cair.
+- Gestos e reações funcionam sentado: dá para aplaudir no banco ou comer à mesa.
+
+### Alterado
+
+- Os personagens acenam muito menos. Acenar, apontar, aplaudir, comemorar,
+  espantar-se, rir, concordar, negar e abraçar agora tocam uma vez, por cerca
+  de dois a três segundos, e o personagem volta a ficar parado, atento.
+- Sem ação no roteiro, o personagem fica parado em vez de acenar, e quem
+  acompanha escuta, virado para quem fala, em vez de "falar" o tempo todo.
+- Quando alguém faz algo e outros assistem ("os vizinhos não acreditaram"),
+  quem assiste reage: espanta-se, ri ou chora.
+- Andar ou correr sem destino definido passa a atravessar o quadro, em vez de
+  marchar no lugar.
+
 ## [0.3.0] - 2026-11-17
 
 ### Adicionado

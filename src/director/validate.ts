@@ -258,6 +258,61 @@ const ANIMATION_ALIASES: Aliases<AnimationName> = {
   cycle: 'ride',
   stand: 'idle',
   parado: 'idle',
+  listening: 'listen',
+  watch: 'listen',
+  watching: 'listen',
+  observe: 'listen',
+  escutar: 'listen',
+  ouvir: 'listen',
+  shocked: 'surprised',
+  surprise: 'surprised',
+  amazed: 'surprised',
+  astonished: 'surprised',
+  scared: 'surprised',
+  gasp: 'surprised',
+  espantado: 'surprised',
+  surpreso: 'surprised',
+  laughing: 'laugh',
+  giggle: 'laugh',
+  smile: 'laugh',
+  rir: 'laugh',
+  crying: 'cry',
+  weep: 'cry',
+  sob: 'cry',
+  sad: 'cry',
+  chorar: 'cry',
+  agree: 'nod',
+  nodding: 'nod',
+  concordar: 'nod',
+  refuse: 'deny',
+  disagree: 'deny',
+  shake_head: 'deny',
+  negar: 'deny',
+  thinking: 'think',
+  ponder: 'think',
+  wonder: 'think',
+  pensar: 'think',
+  carrying: 'carry',
+  hold: 'carry',
+  carregar: 'carry',
+  working: 'work',
+  dig: 'work',
+  hoe: 'work',
+  farm: 'work',
+  hammer: 'work',
+  trabalhar: 'work',
+  eating: 'eat',
+  drink: 'eat',
+  drinking: 'eat',
+  comer: 'eat',
+  hugging: 'hug',
+  embrace: 'hug',
+  abracar: 'hug',
+  falling: 'fall',
+  trip: 'fall',
+  stumble: 'fall',
+  faint: 'fall',
+  cair: 'fall',
 };
 
 const KIND_ALIASES: Aliases<CharacterKind> = {
@@ -599,6 +654,10 @@ function sanitizeCharacters(raw: unknown, registry: Map<string, Look>): Characte
       animation: closestEnum(r.animation, ANIMATIONS, 'idle', ANIMATION_ALIASES),
     };
     if (target) def.targetPosition = target;
+    // andar ou correr sem destino seria marchar no lugar: atravessa o quadro
+    else if (def.animation === 'walk' || def.animation === 'run') {
+      def.targetPosition = [position[0] > 0 ? position[0] - 3 : position[0] + 3, 0, clamp(position[2] + 1.2, -WORLD_LIMIT, WORLD_LIMIT)];
+    }
     if (typeof r.mount === 'string' && r.mount.trim()) def.mount = r.mount.trim().slice(0, 40);
     out.push(def);
   }

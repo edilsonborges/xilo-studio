@@ -35,6 +35,19 @@ export const ANIMATIONS = [
   'sleep',
   'ride',
   'drive',
+  // reações e ofícios (v0.4.0)
+  'listen',
+  'surprised',
+  'laugh',
+  'cry',
+  'nod',
+  'deny',
+  'think',
+  'carry',
+  'work',
+  'eat',
+  'hug',
+  'fall',
 ] as const;
 export const CHARACTER_KINDS = ['man', 'woman', 'child', 'elderly'] as const;
 export const ACCESSORIES = ['straw_hat', 'cap', 'leather_hat', 'headscarf', 'glasses', 'none'] as const;

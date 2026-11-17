@@ -31,6 +31,35 @@ test('o idoso correndo pela praça vira um idoso, correndo, na praça', () => {
   assert.equal(s.camera.movement, 'follow_character');
 });
 
+test('quem assiste reage em vez de acenar: os vizinhos se espantam com o idoso correndo', () => {
+  const s = scene('Os vizinhos não acreditaram: o velhinho corria mais rápido que o vento!');
+  assert.equal(s.characters[0].animation, 'run');
+  assert.equal(s.characters[1].animation, 'surprised');
+  assert.equal(s.characters[1].targetPosition, undefined, 'quem assiste fica parado');
+});
+
+test('sem ação no roteiro ninguém acena: parado, e a companhia escuta', () => {
+  const slots: SceneSlot[] = [1, 2, 3, 4, 5, 6].map((n) => ({ id: `scene_${n}`, startTime: n * 5, endTime: n * 5 + 5, text: 'Era uma vez um lugar distante com a família.' }));
+  const scenes = generateScenesByRules(slots, slots[0].text);
+  for (const sc of scenes) {
+    assert.equal(sc.characters[0].animation, 'idle');
+    assert.equal(sc.characters[1].animation, 'listen');
+  }
+  const talk = scene('O vaqueiro contou a história para o amigo.');
+  assert.deepEqual(talk.characters.map((c) => c.animation), ['talk', 'listen']);
+});
+
+test('reações e ofícios do roteiro: chorar, rir, trabalhar, carregar, cair', () => {
+  assert.equal(scene('A moça chorou a noite inteira.').characters[0].animation, 'cry');
+  assert.equal(scene('O menino riu muito da piada.').characters[0].animation, 'laugh');
+  assert.equal(scene('O lavrador capinava a roça com a enxada.').characters[0].animation, 'work');
+  const carry = scene('Ela carregava o balde de água.').characters[0];
+  assert.equal(carry.animation, 'carry');
+  assert.ok(carry.targetPosition);
+  assert.equal(scene('O cangaceiro tropeçou e caiu.').characters[0].animation, 'fall');
+});
+
+
 test('menino de bicicleta na rua com chuva: criança montada numa bicicleta que anda', () => {
   const s = scene('O menino pedalava a bicicleta pela rua da cidade debaixo de chuva.');
   const hero = s.characters[0];
@@ -87,6 +116,7 @@ test('validador: apelidos da IA, campos novos e montaria só em objeto existente
         { id: 'vovo', kind: 'old man', animation: 'running', accessory: 'oculos' },
         { id: 'motorista', animation: 'driving', mount: 'carro_1' },
         { id: 'fantasma', animation: 'ride', mount: 'nao_existe' },
+        { id: 'a', animation: 'shocked' }, { id: 'b', animation: 'laughing' }, { id: 'c', animation: 'thinking' },
       ],
       props: [{ id: 'carro_1', type: 'automobile', position: [0, 0, -4], targetPosition: [0, 0, 4] }],
     }],
@@ -98,8 +128,10 @@ test('validador: apelidos da IA, campos novos e montaria só em objeto existente
   assert.equal(s.characters[0].kind, 'elderly');
   assert.equal(s.characters[0].animation, 'run');
   assert.equal(s.characters[0].accessory, 'glasses');
+  assert.ok(s.characters[0].targetPosition, 'correr sem destino ganha destino');
   assert.equal(s.characters[1].mount, 'carro_1');
   assert.equal(s.characters[2].mount, undefined);
+  assert.deepEqual(s.characters.slice(3).map((c) => c.animation), ['surprised', 'laugh', 'think']);
   assert.equal(s.props[0].type, 'car');
   assert.deepEqual(s.props[0].targetPosition, [0, 0, 4]);
 });
