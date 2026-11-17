@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Xilo: roteiro + narração viram vídeo vertical 3D low-poly com cel-shading e legendas karaokê."
+    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Xilo Studio</title>
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">X</span>
+          <div>
+            <h1>Xilo</h1>
+            <p>Roteiro e narração viram vídeo 3D de cordel</p>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span class="badge" id="mode-badge" title="Fontes usadas na geração"></span>
+          <button class="btn" id="open-settings" type="button">Configurações</button>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="panel" aria-label="Entradas">
+          <div class="field">
+            <div class="field-head">
+              <label for="script">1. Roteiro</label>
+              <button class="link" id="use-sample" type="button">Usar exemplo</button>
+            </div>
+            <textarea
+              id="script"
+              rows="9"
+              placeholder="Cole aqui o texto exato da narração…"
+              spellcheck="false"
+            ></textarea>
+          </div>
+
+          <div class="field">
+            <div class="field-head"><label for="audio">2. Narração (.mp3 ou .wav)</label></div>
+            <label class="dropzone" id="dropzone" for="audio">
+              <input id="audio" type="file" accept="audio/mpeg,audio/wav,audio/x-wav,audio/*,.mp3,.wav" />
+              <strong id="audio-name">Clique ou arraste o áudio</strong>
+              <span id="audio-meta">O arquivo não sai do seu navegador</span>
+            </label>
+          </div>
+
+          <button class="btn btn-primary btn-big" id="generate" type="button">Gerar vídeo</button>
+
+          <ol class="status" id="status" aria-live="polite"></ol>
+
+          <details class="json-editor" id="json-details">
+            <summary>Cenas (SceneGraphJSON)</summary>
+            <p class="hint">
+              Edite e aplique para ajustar as cenas. Valores fora do schema são corrigidos
+              automaticamente.
+            </p>
+            <textarea id="json" rows="14" spellcheck="false" placeholder="Gere um vídeo para ver o JSON das cenas."></textarea>
+            <button class="btn" id="apply-json" type="button" disabled>Aplicar JSON</button>
+          </details>
+        </section>
+
+        <section class="stage" aria-label="Preview">
+          <div class="phone">
+            <canvas id="stage" width="1080" height="1920"></canvas>
+            <div class="stage-empty" id="stage-empty">
+              <span>9:16</span>
+              <p>O preview aparece aqui depois de gerar.</p>
+            </div>
+          </div>
+
+          <div class="transport">
+            <button class="btn btn-icon" id="play" type="button" disabled aria-label="Tocar">▶</button>
+            <input id="seek" type="range" min="0" max="1" step="0.01" value="0" disabled aria-label="Linha do tempo" />
+            <span class="time" id="time">0:00.0 / 0:00.0</span>
+          </div>
+
+          <div class="export">
+            <label class="check"><input id="captions" type="checkbox" checked /> Legendas</label>
+            <select id="format" aria-label="Formato do vídeo">
+              <option value="auto">Formato automático</option>
+              <option value="mp4">MP4 (H.264)</option>
+              <option value="webm">WebM (VP9)</option>
+            </select>
+            <button class="btn btn-primary" id="export" type="button" disabled>Exportar vídeo</button>
+            <button class="btn" id="cancel-export" type="button" hidden>Cancelar</button>
+          </div>
+          <div class="progress" id="progress" hidden><div id="progress-bar"></div></div>
+          <p class="hint" id="export-hint">
+            A exportação grava em tempo real em 1080x1920. Mantenha esta aba visível até terminar.
+          </p>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="settings">
+      <form method="dialog" id="settings-form">
+        <h2>Configurações</h2>
+        <p class="hint">
+          As chaves ficam só no <code>localStorage</code> deste navegador e são enviadas apenas
+          para a API do provedor escolhido. Sem chave, o Xilo usa o alinhador local e o gerador
+          de cenas por regras.
+        </p>
+
+        <fieldset>
+          <legend>Timestamps da narração</legend>
+          <label>Origem
+            <select name="transcription">
+              <option value="local">Alinhador local (sem chave)</option>
+              <option value="openai">OpenAI Whisper (timestamps por palavra)</option>
+            </select>
+          </label>
+          <label>Modelo de transcrição
+            <input name="openaiTranscribeModel" type="text" autocomplete="off" />
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Diretor de arte (cenas)</legend>
+          <label>Provedor
+            <select name="llmProvider">
+              <option value="none">Gerador por regras (sem chave)</option>
+              <option value="openai">OpenAI</option>
+              <option value="gemini">Google Gemini</option>
+              <option value="anthropic">Anthropic Claude</option>
+            </select>
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Chaves e modelos</legend>
+          <div class="grid2">
+            <label>Chave OpenAI
+              <input name="openaiKey" type="password" autocomplete="off" placeholder="sk-…" />
+            </label>
+            <label>Modelo OpenAI
+              <input name="openaiModel" type="text" autocomplete="off" />
+            </label>
+            <label>Chave Gemini
+              <input name="geminiKey" type="password" autocomplete="off" placeholder="AIza…" />
+            </label>
+            <label>Modelo Gemini
+              <input name="geminiModel" type="text" autocomplete="off" />
+            </label>
+            <label>Chave Anthropic
+              <input name="anthropicKey" type="password" autocomplete="off" placeholder="sk-ant-…" />
+            </label>
+            <label>Modelo Anthropic
+              <input name="anthropicModel" type="text" autocomplete="off" />
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Legenda</legend>
+          <label class="inline">Cor de destaque da palavra
+            <input name="captionAccent" type="color" />
+          </label>
+        </fieldset>
+
+        <div class="dialog-actions">
+          <button class="btn" type="button" id="clear-keys">Apagar chaves</button>
+          <span class="spacer"></span>
+          <button class="btn" type="button" id="close-settings">Cancelar</button>
+          <button class="btn btn-primary" type="submit">Salvar</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

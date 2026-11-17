@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.local
+.DS_Store
+.vite/
+ai-docs/
+
+# mídia de teste (não versionar áudio/vídeo grandes)
+*.mp3
+*.wav
+*.m4a
+*.ogg
+*.webm
+*.mp4
+*.mov
+.playwright-mcp/

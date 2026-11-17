@@ -1,0 +1,76 @@
+// Configurações do usuário. As chaves de API vivem só no localStorage.
+
+export type LlmProvider = 'none' | 'openai' | 'gemini' | 'anthropic';
+export type TranscriptionProvider = 'local' | 'openai';
+
+export interface Settings {
+  transcription: TranscriptionProvider;
+  llmProvider: LlmProvider;
+  openaiKey: string;
+  geminiKey: string;
+  anthropicKey: string;
+  openaiModel: string;
+  openaiTranscribeModel: string;
+  geminiModel: string;
+  anthropicModel: string;
+  captionAccent: string;
+}
+
+const STORAGE_KEY = 'xilo.settings.v1';
+const env = import.meta.env;
+
+export const DEFAULT_SETTINGS: Settings = {
+  transcription: 'local',
+  llmProvider: 'none',
+  openaiKey: '',
+  geminiKey: '',
+  anthropicKey: '',
+  openaiModel: env.VITE_OPENAI_MODEL || 'gpt-4o-mini',
+  openaiTranscribeModel: env.VITE_OPENAI_TRANSCRIBE_MODEL || 'whisper-1',
+  geminiModel: env.VITE_GEMINI_MODEL || 'gemini-2.5-flash',
+  anthropicModel: env.VITE_ANTHROPIC_MODEL || 'claude-opus-5-5',
+  captionAccent: '#d8432b',
+};
+
+export function loadSettings(): Settings {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_SETTINGS };
+    const parsed = JSON.parse(raw) as Partial<Settings>;
+    const merged = { ...DEFAULT_SETTINGS };
+    for (const key of Object.keys(DEFAULT_SETTINGS) as Array<keyof Settings>) {
+      const value = parsed[key];
+      if (typeof value === 'string' && (value !== '' || key.endsWith('Key'))) {
+        (merged as Record<string, string>)[key] = value;
+      }
+    }
+    if (!['local', 'openai'].includes(merged.transcription)) merged.transcription = 'local';
+    if (!['none', 'openai', 'gemini', 'anthropic'].includes(merged.llmProvider)) {
+      merged.llmProvider = 'none';
+    }
+    return merged;
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+export function saveSettings(settings: Settings): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  } catch {
+    // localStorage indisponível (modo privado): segue só com o valor em memória
+  }
+}
+
+export function llmKey(settings: Settings): string {
+  switch (settings.llmProvider) {
+    case 'openai':
+      return settings.openaiKey.trim();
+    case 'gemini':
+      return settings.geminiKey.trim();
+    case 'anthropic':
+      return settings.anthropicKey.trim();
+    default:
+      return '';
+  }
+}

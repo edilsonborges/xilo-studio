@@ -1,0 +1,23 @@
+{
+  "name": "xilo-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Roteiro + narração → vídeo vertical 3D low-poly com cel-shading, legendas karaokê e exportação automática. Three.js + LLM.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.9.0",
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  }
+}
