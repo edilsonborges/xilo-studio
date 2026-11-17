@@ -19,7 +19,7 @@ import { disposeTree, setMaterialLook } from './toon';
 export const FRAME_WIDTH = 1080;
 export const FRAME_HEIGHT = 1920;
 
-const MAX_POINT_LIGHTS = 3;
+const MAX_POINT_LIGHTS = 4;
 const BED_SNAP_DISTANCE = 1.3;
 
 interface BuiltCharacter {
@@ -31,6 +31,17 @@ interface BuiltCharacter {
   restHeight: number;
   animation: SceneDef['characters'][number]['animation'];
   id: string;
+  /** veículo, cavalo ou assento onde o personagem está */
+  seatedOn?: BuiltProp;
+}
+
+interface BuiltProp {
+  object: PropObject;
+  start: THREE.Vector3;
+  end: THREE.Vector3;
+  moves: boolean;
+  distance: number;
+  baseYaw: number;
 }
 
 interface BuiltScene {
@@ -38,8 +49,11 @@ interface BuiltScene {
   scene: THREE.Scene;
   environment: EnvironmentObject;
   characters: BuiltCharacter[];
-  props: PropObject[];
+  props: BuiltProp[];
 }
+
+const SEAT_SNAP_DISTANCE = 1.6;
+const tmp = new THREE.Vector3();
 
 export class SceneEngine {
   readonly canvas: HTMLCanvasElement;
@@ -137,21 +151,39 @@ export class SceneEngine {
     const progress = clamp((t - def.startTime) / span, 0, 1);
 
     built.environment.update(t);
-    for (const prop of built.props) prop.update?.(t);
+    // veículos e animais andam em velocidade constante, de position a targetPosition
+    for (const p of built.props) {
+      const group = p.object.group;
+      group.position.lerpVectors(p.start, p.end, p.moves ? progress : 0);
+      p.object.update?.(t, { moving: p.moves && progress < 1, distance: p.moves ? p.distance * progress : 0 });
+    }
 
     let follow: { start: THREE.Vector3; current: THREE.Vector3 } | undefined;
     for (const c of built.characters) {
       const root = c.rig.root;
-      // deslocamento linear: combina com o ciclo de passos em velocidade constante
-      root.position.lerpVectors(c.start, c.end, c.moves ? progress : 0);
-      root.rotation.y = c.facing;
-      poseCharacter(c.rig, c.animation, t, { restHeight: c.restHeight });
+      let seatHeight: number | undefined;
+      let moving = false;
+      if (c.seatedOn?.object.seat) {
+        // vai junto com o veículo/assento: posição do assento no mundo
+        const group = c.seatedOn.object.group;
+        const [sx, sy, sz] = c.seatedOn.object.seat.position;
+        tmp.set(sx, 0, sz).multiply(group.scale).applyAxisAngle(THREE.Object3D.DEFAULT_UP, group.rotation.y);
+        root.position.copy(group.position).add(tmp);
+        root.rotation.y = group.rotation.y;
+        seatHeight = (sy * group.scale.y) / root.scale.y;
+        moving = c.seatedOn.moves && progress < 1;
+      } else {
+        // deslocamento linear: combina com o ciclo de passos em velocidade constante
+        root.position.lerpVectors(c.start, c.end, c.moves ? progress : 0);
+        root.rotation.y = c.facing;
+      }
+      poseCharacter(c.rig, c.animation, t, { restHeight: c.restHeight, seatHeight, moving });
       if (def.camera.movement === 'follow_character' && def.camera.target === c.id) {
-        follow = { start: c.start, current: root.position.clone() };
+        follow = { start: c.seatedOn ? c.seatedOn.start.clone().add(tmp) : c.start, current: root.position.clone() };
       }
     }
 
-    const pose = computeCameraPose(def.camera, progress, follow);
+    const pose = computeCameraPose(def.camera, progress, follow, t);
     this.camera.position.copy(pose.position);
     this.camera.position.y = Math.max(0.3, this.camera.position.y);
     this.camera.lookAt(pose.lookAt);
@@ -167,46 +199,64 @@ export class SceneEngine {
     const environment = createEnvironment(def.environment.preset, def.environment, seed);
     scene.add(environment.group);
     scene.fog = environment.fog;
-    scene.background = new THREE.Color(def.environment.fogColor);
+    scene.background = environment.fog.color.clone();
 
     let lights = 0;
-    const props = def.props.map((p, i) => {
-      const allowLight = p.type === 'lantern' && lights < MAX_POINT_LIGHTS;
-      if (allowLight) lights++;
-      const prop = createProp(p.type, p.position, p.scale, p.color, {
+    const props = def.props.map((p, i): BuiltProp => {
+      const object = createProp(p.type, p.position, p.scale, p.color, {
         rotationY: p.rotationY,
         palette: environment.palette,
         seed: ((seed + i * 7919) % 1000) / 100,
-        allowLight,
+        allowLight: lights < MAX_POINT_LIGHTS,
+        night: environment.night,
       });
-      scene.add(prop.group);
-      return prop;
+      if (object.usedLight) lights++;
+      scene.add(object.group);
+      const start = new THREE.Vector3(...p.position);
+      const end = p.targetPosition ? new THREE.Vector3(...p.targetPosition) : start.clone();
+      const moves = start.distanceTo(end) > 0.05;
+      // quem anda olha para onde vai
+      if (moves) object.group.rotation.y = Math.atan2(end.x - start.x, end.z - start.z);
+      return { object, start, end, moves, distance: start.distanceTo(end), baseYaw: object.group.rotation.y };
     });
+    const propById = new Map<string, BuiltProp>();
+    def.props.forEach((p, i) => { if (p.id) propById.set(p.id, props[i]); });
 
-    const beds = props.filter((p) => p.restHeight !== undefined);
+    const beds = props.filter((p) => p.object.restHeight !== undefined);
+    const seats = props.filter((p) => p.object.seat?.pose === 'sit' && !p.moves);
     const characters = def.characters.map((c): BuiltCharacter => {
       const rig = createCharacter(c);
       scene.add(rig.root);
       const start = new THREE.Vector3(...c.position);
       const end = c.targetPosition ? new THREE.Vector3(...c.targetPosition) : start.clone();
-      const moves = start.distanceTo(end) > 0.05;
+      const built: BuiltCharacter = { rig, start, end, moves: start.distanceTo(end) > 0.05, facing: 0, restHeight: 0, animation: c.animation, id: c.id };
 
-      let restHeight = 0;
-      if (c.animation === 'sleep') {
-        const bed = beds.find((b) => b.group.position.distanceTo(start) < BED_SNAP_DISTANCE);
+      const mount = c.mount ? propById.get(c.mount) : undefined;
+      if (mount?.object.seat) {
+        built.seatedOn = mount;
+        built.moves = false;
+        // em cima de um veículo, a pose é a do assento (dirigir, montar, sentar); conversar continua valendo
+        if (c.animation !== 'talk') built.animation = mount.object.seat.pose;
+      } else if (c.animation === 'sit' || c.animation === 'drive' || c.animation === 'ride') {
+        const seat = seats.find((s) => s.start.distanceTo(start) < SEAT_SNAP_DISTANCE);
+        if (seat) built.seatedOn = seat;
+        if (c.animation !== 'sit' && !seat) built.animation = 'sit';
+      } else if (c.animation === 'sleep') {
+        const bed = beds.find((b) => b.start.distanceTo(start) < BED_SNAP_DISTANCE);
         if (bed) {
-          restHeight = bed.restHeight ?? 0;
+          built.restHeight = bed.object.restHeight ?? 0;
           // alinha o corpo com a cama, senão ele fica atravessado
-          start.copy(bed.group.position);
+          start.copy(bed.start);
           end.copy(start);
-          rig.root.userData.bedYaw = bed.group.rotation.y;
+          rig.root.userData.bedYaw = bed.object.group.rotation.y;
         }
       }
-      return { rig, start, end, moves, facing: 0, restHeight, animation: c.animation, id: c.id };
+      return built;
     });
 
     // para onde cada um olha: na direção em que anda, ou meio virado para o vizinho
     for (const c of characters) {
+      if (c.seatedOn) continue;
       if (c.animation === 'sleep') {
         c.moves = false;
         c.facing = (c.rig.root.userData.bedYaw as number | undefined) ?? 0;

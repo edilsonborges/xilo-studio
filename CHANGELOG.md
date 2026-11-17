@@ -4,6 +4,44 @@ Todas as mudanças relevantes do Xilo Studio ficam registradas aqui. O formato
 segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões
 seguem o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.3.0] - 2026-11-17
+
+### Adicionado
+
+- 25 cenários 3D em seis grupos:
+  - **Sertão e campo:** sertão de dia, caatinga na seca, fazenda e roça, vila
+    ao entardecer, estrada de terra.
+  - **Cidade:** rua da cidade, praça com coreto, feira livre, cidade à noite.
+  - **Natureza:** floresta, beira de rio, serra e montanhas, campo florido.
+  - **Litoral e água:** praia, porto e cais, alto-mar.
+  - **Interiores:** quarto à noite, sala de casa, cozinha, sala de aula, dentro
+    da igreja.
+  - **Festas e sonho:** festa junina, carnaval, noite estrelada, sonho.
+- Personagens de quatro tipos (homem, mulher, criança e idoso), com cabelo,
+  roupa e proporções próprias, e novos acessórios: boné, chapéu de couro de
+  cangaceiro, lenço e óculos.
+- 15 ações: andar, correr, pular, dançar, sentar, conversar, acenar, apontar,
+  bater palmas, comemorar, rezar ajoelhado, dormir, dirigir e montar, além de
+  ficar parado.
+- Veículos que andam durante a cena e levam gente: carro, caminhão, ônibus,
+  bicicleta, moto, barco e carroça. Animais: cavalo (dá para montar),
+  cachorro, galinha, pássaro, cabra e boi.
+- Mais de 40 objetos novos, como prédios, igreja, coreto, barraca de feira,
+  poste, banco, coqueiro, ponte, cais, sofá, fogão, lousa, fogueira e
+  bandeirinhas.
+- Clima: sol, nublado, chuva, tempestade com relâmpago, neblina e vento. Hora
+  do dia: dia, entardecer, noite e amanhecer. À noite, janelas, postes e
+  fogueiras acendem.
+- Câmera: grua subindo, grua descendo e câmera na mão.
+- A IA do Xilo e o gerador por regras reconhecem tudo isso no roteiro. Por
+  exemplo, "seu Antônio, com oitenta anos, disparou pela praça" vira um idoso
+  correndo na praça.
+
+### Alterado
+
+- Vidros dos veículos translúcidos e cabines abertas, para quem dirige aparecer.
+- Cenas antigas (JSON da v0.2.0) continuam valendo sem mudança.
+
 ## [0.2.0] - 2026-11-17
 
 ### Adicionado
