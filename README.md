@@ -68,6 +68,23 @@ Dica: sem Whisper, o alinhador local distribui as palavras do roteiro pela
 duração da fala. Ele funciona melhor quando o roteiro é exatamente o texto
 narrado e a narração tem ritmo regular.
 
+## Estilos de vídeo e IA do Xilo
+
+No passo 3 você escolhe o estilo:
+
+| Estilo | Como as cenas são feitas |
+|---|---|
+| **Ilustrado por IA** (xilogravura, aquarela, livro infantil, cinema) | A IA lê o roteiro, descreve uma imagem por cena com os mesmos personagens e desenha cada uma. O vídeo anima as imagens com movimento de câmera, título e legenda. Representa qualquer história, mas cada imagem leva de segundos a minutos. |
+| **3D de cordel** | Cenas montadas com um kit fixo de peças 3D (sertão, vila, floresta, vaqueiro…). Rápido, mas não desenha nada fora do kit. |
+
+A "IA do Xilo" roda no servidor, pelo [opencode-gateway](https://github.com/edilsonborges/opencode-gateway)
+da mesma máquina: texto com `gpt-6-luna` e imagens com `gpt-image-2`, pela
+assinatura do ChatGPT. Ninguém precisa de chave no navegador. Configure
+`GATEWAY_API_KEY` no `.env` com uma chave de consumidor do gateway (perfil
+`read_only`). Sem ela, ou se a imagem falhar, o Xilo faz o vídeo em 3D e avisa.
+As chaves próprias (OpenAI, Gemini, Anthropic) em **Configurações** continuam
+funcionando como alternativa para dirigir o 3D.
+
 ## Gerar a narração com o Edge TTS
 
 Se você não tem uma narração gravada, o Xilo cria uma com as vozes neurais do

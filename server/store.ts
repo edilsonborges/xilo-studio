@@ -15,6 +15,9 @@ export const RESET_IP_LIMIT = 20;
 export const TOKEN_IP_LIMIT = 30;
 /** Narrações por pessoa a cada 15 minutos (o Edge TTS é um serviço gratuito e não oficial). */
 export const NARRATION_LIMIT = 20;
+/** Pedidos à IA por pessoa a cada 15 minutos (consomem o plano do ChatGPT). */
+export const AI_TEXT_LIMIT = 40;
+export const AI_IMAGE_LIMIT = 60;
 
 export type TokenPurpose = 'invite' | 'reset';
 

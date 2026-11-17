@@ -4,9 +4,10 @@ import { join, posix } from 'node:path';
 import { z } from 'zod';
 import { loadConfig, validateConfig, type ServerConfig } from './config.js';
 import { createResendMailer, inviteEmail, resetEmail, type Mailer } from './mailer.js';
+import { createGateway, type AiOutcome, type Gateway } from './ai.js';
 import { VOICES, edgeNarrator, type Narrator } from './narration.js';
 import { validPasswordInput } from './password.js';
-import { AuthStore, NARRATION_LIMIT, SESSION_TTL, invalidCredentials, type TokenPurpose, type User } from './store.js';
+import { AuthStore, AI_IMAGE_LIMIT, AI_TEXT_LIMIT, NARRATION_LIMIT, SESSION_TTL, invalidCredentials, type TokenPurpose, type User } from './store.js';
 
 // Mesma política que o nginx usava: o app só conversa com o próprio site e com as
 // APIs de IA, porque as chaves do usuário ficam no localStorage.
@@ -37,6 +38,10 @@ const setPasswordSchema = z.object({ token: linkTokenSchema, password: newPasswo
 const createUserSchema = z.object({ name: z.string().trim().min(1).max(80), email: emailSchema }).strict();
 const userIdSchema = z.string().uuid();
 const MAX_NARRATION_CHARS = 6_000;
+const aiTextSchema = z.object({ system: z.string().min(1).max(20_000), prompt: z.string().min(1).max(60_000) }).strict();
+const aiImageSchema = z.object({ prompt: z.string().trim().min(1).max(4_000) }).strict();
+/** Consultas pendentes à IA ficam na memória; depois disso o pedido é dado como perdido. */
+const AI_JOB_TTL = 15 * 60_000;
 const narrationSchema = z.object({
   text: z.string().trim().min(1).max(MAX_NARRATION_CHARS),
   voice: z.enum(VOICES.map((voice) => voice.id) as [string, ...string[]]),
@@ -82,6 +87,8 @@ export interface AppOptions {
   onBackgroundTask?: (task: Promise<void>) => void;
   /** Gera a narração; os testes trocam pelo falso. */
   narrator?: Narrator;
+  /** Cliente do opencode-gateway; null desliga a IA do servidor. */
+  gateway?: Gateway | null;
 }
 
 export function createApp(options: AppOptions = {}): express.Express {
@@ -175,7 +182,8 @@ export function createApp(options: AppOptions = {}): express.Express {
   const smallJson = express.json({ limit: '4kb', strict: true, inflate: false });
   // O roteiro da narração pode ser longo; o resto da API recebe só alguns campos.
   const scriptJson = express.json({ limit: '64kb', strict: true, inflate: false });
-  app.use('/api', (req, res, next) => (req.path === '/narration' ? scriptJson : smallJson)(req, res, next));
+  app.use('/api', (req, res, next) =>
+    (req.path === '/narration' || req.path === '/ai/text' ? scriptJson : smallJson)(req, res, next));
 
   app.get('/api/auth/me', (req, res) => {
     res.json({ user: sessionUser(req, res), emailEnabled: Boolean(mailer) });
@@ -301,6 +309,101 @@ export function createApp(options: AppOptions = {}): express.Express {
     } catch (error) {
       console.error(`Falha no Edge TTS: ${error instanceof Error ? error.message : 'erro desconhecido'}`);
       res.status(502).json({ error: 'O Edge TTS não respondeu. Tente de novo em instantes ou envie um áudio seu.' });
+    }
+  });
+
+  // ---- IA pelo opencode-gateway (qualquer pessoa logada) ----
+
+  const gateway = options.gateway === undefined
+    ? (config.gateway ? createGateway(config.gateway) : null)
+    : options.gateway;
+  const aiJobs = new Map<string, { userId: string; statusUrl: string; kind: 'text' | 'image'; createdAt: number }>();
+
+  function sendOutcome(res: Response, userId: string, outcome: AiOutcome): void {
+    if (outcome.status === 'pending') {
+      for (const [id, job] of aiJobs) if (now() - job.createdAt > AI_JOB_TTL) aiJobs.delete(id);
+      const id = crypto.randomUUID();
+      aiJobs.set(id, { userId, statusUrl: outcome.statusUrl, kind: outcome.kind, createdAt: now() });
+      res.status(202).set('Retry-After', '5').json({ status: 'pending', id });
+      return;
+    }
+    if (outcome.kind === 'text') res.json({ status: 'completed', text: outcome.text });
+    else res.json({ status: 'completed', image: outcome.image, mimeType: outcome.mimeType });
+  }
+
+  function aiFailure(res: Response, error: unknown): void {
+    console.error(`Falha no gateway de IA: ${error instanceof Error ? error.message : 'erro desconhecido'}`);
+    res.status(502).json({ error: 'A IA não respondeu agora. Tente de novo em instantes.' });
+  }
+
+  app.get('/api/ai/status', requireUser, (_req, res) => {
+    res.json({ text: Boolean(gateway), images: Boolean(gateway) });
+  });
+
+  app.post('/api/ai/text', requireUser, async (req, res) => {
+    if (!gateway) {
+      res.status(503).json({ error: 'A IA do servidor não está configurada.' });
+      return;
+    }
+    const parsed = aiTextSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Pedido de texto inválido.' });
+      return;
+    }
+    const user = res.locals.user as User;
+    const blocked = store.reserve([{ key: `ai-text:${user.id}`, max: AI_TEXT_LIMIT }], now());
+    if (blocked) {
+      failure(res, blocked);
+      return;
+    }
+    try {
+      sendOutcome(res, user.id, await gateway.startText(parsed.data.system, parsed.data.prompt));
+    } catch (error) {
+      aiFailure(res, error);
+    }
+  });
+
+  app.post('/api/ai/image', requireUser, async (req, res) => {
+    if (!gateway) {
+      res.status(503).json({ error: 'A IA do servidor não está configurada.' });
+      return;
+    }
+    const parsed = aiImageSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Descrição da imagem inválida.' });
+      return;
+    }
+    const user = res.locals.user as User;
+    const blocked = store.reserve([{ key: `ai-image:${user.id}`, max: AI_IMAGE_LIMIT }], now());
+    if (blocked) {
+      failure(res, blocked);
+      return;
+    }
+    try {
+      sendOutcome(res, user.id, await gateway.startImage(parsed.data.prompt));
+    } catch (error) {
+      aiFailure(res, error);
+    }
+  });
+
+  app.get('/api/ai/jobs/:id', requireUser, async (req, res) => {
+    const user = res.locals.user as User;
+    const job = aiJobs.get(String(req.params.id));
+    if (!gateway || !job || job.userId !== user.id) {
+      res.status(404).json({ error: 'Pedido não encontrado. Gere de novo.' });
+      return;
+    }
+    try {
+      const outcome = await gateway.poll(job.statusUrl, job.kind);
+      if (outcome.status === 'pending') {
+        res.status(202).set('Retry-After', '5').json({ status: 'pending', id: req.params.id });
+        return;
+      }
+      aiJobs.delete(String(req.params.id));
+      sendOutcome(res, user.id, outcome);
+    } catch (error) {
+      aiJobs.delete(String(req.params.id));
+      aiFailure(res, error);
     }
   });
 

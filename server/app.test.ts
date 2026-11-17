@@ -7,6 +7,7 @@ import request from 'supertest';
 import { createApp } from './app.js';
 import type { ServerConfig } from './config.js';
 import type { Email, Mailer } from './mailer.js';
+import { createGateway, type Gateway } from './ai.js';
 import type { Narrator } from './narration.js';
 import { LOGIN_EMAIL_LIMIT, NARRATION_LIMIT } from './store.js';
 
@@ -31,7 +32,7 @@ function writeDist(dist: string): void {
   }));
 }
 
-function setup(t: TestContext, mailer: Mailer | null = null, narrator?: Narrator) {
+function setup(t: TestContext, mailer: Mailer | null = null, narrator?: Narrator, gateway?: Gateway | null) {
   const dir = mkdtempSync(join(tmpdir(), 'xilo-test-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeDist(join(dir, 'dist'));
@@ -52,6 +53,7 @@ function setup(t: TestContext, mailer: Mailer | null = null, narrator?: Narrator
     mailer: mailer === null ? async (message) => { sent.push(message); } : mailer,
     onBackgroundTask: (task) => pending.push(task),
     narrator,
+    gateway,
   });
   t.after(() => app.locals.close());
   const flush = () => Promise.all(pending.splice(0));
@@ -258,4 +260,108 @@ test('narração: falha do Edge TTS vira 502 e há limite por pessoa', async (t)
   fail = false;
   for (let i = 1; i < NARRATION_LIMIT; i++) await agent.post('/api/narration').set('Origin', ORIGIN).send(body).expect(200);
   await agent.post('/api/narration').set('Origin', ORIGIN).send(body).expect(429);
+});
+
+test('IA: sem gateway configurado, o app avisa e não chama nada', async (t) => {
+  const { app, sent, flush } = setup(t);
+  const agent = await adminAgent(app, sent, flush);
+  const status = await agent.get('/api/ai/status').expect(200);
+  assert.deepEqual(status.body, { text: false, images: false });
+  await agent.post('/api/ai/text').set('Origin', ORIGIN).send({ system: 's', prompt: 'p' }).expect(503);
+});
+
+test('IA: texto na hora, imagem pendente consultada até concluir, só pelo dono', async (t) => {
+  const polls: string[] = [];
+  let ready = false;
+  const gateway: Gateway = {
+    startText: async (system, prompt) => ({ status: 'completed', kind: 'text', text: `{"ok":"${system}/${prompt}"}` }),
+    startImage: async () => ({ status: 'pending', kind: 'image', statusUrl: '/v1/images/generations/abc' }),
+    poll: async (statusUrl, kind) => {
+      polls.push(`${kind}:${statusUrl}`);
+      return ready
+        ? { status: 'completed', kind: 'image', image: 'iVBOR'.padEnd(200, 'A'), mimeType: 'image/png' }
+        : { status: 'pending', kind, statusUrl };
+    },
+  };
+  const { app, sent, flush } = setup(t, null, undefined, gateway);
+  await request(app).get('/api/ai/status').expect(401);
+  const admin = await adminAgent(app, sent, flush);
+  assert.deepEqual((await admin.get('/api/ai/status').expect(200)).body, { text: true, images: true });
+
+  const text = await admin.post('/api/ai/text').set('Origin', ORIGIN).send({ system: 'sys', prompt: 'roteiro' }).expect(200);
+  assert.deepEqual(text.body, { status: 'completed', text: '{"ok":"sys/roteiro"}' });
+  // roteiro grande passa do limite de 4 KiB das outras rotas
+  await admin.post('/api/ai/text').set('Origin', ORIGIN).send({ system: 'sys', prompt: 'x'.repeat(20_000) }).expect(200);
+
+  const started = await admin.post('/api/ai/image').set('Origin', ORIGIN).send({ prompt: 'um menino brincando' }).expect(202);
+  assert.equal(started.body.status, 'pending');
+  const id = started.body.id;
+
+  // outra pessoa não consulta o pedido de quem pediu
+  const other = await admin.post('/api/admin/users').set('Origin', ORIGIN).send({ name: 'Bia', email: 'bia@example.com' }).expect(201);
+  assert.ok(other.body.user.id);
+  const bia = request.agent(app);
+  await bia.post('/api/auth/password/set').set('Origin', ORIGIN).send({ token: tokenFrom(sent.at(-1)), password: PASSWORD }).expect(200);
+  await bia.get(`/api/ai/jobs/${id}`).expect(404);
+
+  await admin.get(`/api/ai/jobs/${id}`).expect(202);
+  ready = true;
+  const done = await admin.get(`/api/ai/jobs/${id}`).expect(200);
+  assert.equal(done.body.status, 'completed');
+  assert.equal(done.body.mimeType, 'image/png');
+  await admin.get(`/api/ai/jobs/${id}`).expect(404);
+  assert.deepEqual(polls, ['image:/v1/images/generations/abc', 'image:/v1/images/generations/abc']);
+});
+
+test('IA: falha do gateway vira 502 sem reenvio', async (t) => {
+  let calls = 0;
+  const gateway: Gateway = {
+    startText: async () => { calls++; throw new Error('image_generation_failed'); },
+    startImage: async () => { calls++; throw new Error('image_generation_failed'); },
+    poll: async () => { throw new Error('nunca'); },
+  };
+  const { app, sent, flush } = setup(t, null, undefined, gateway);
+  const admin = await adminAgent(app, sent, flush);
+  await admin.post('/api/ai/image').set('Origin', ORIGIN).send({ prompt: 'x' }).expect(502);
+  assert.equal(calls, 1);
+});
+
+test('cliente do gateway: 202, consulta, extração e URL de consulta só do próprio gateway', async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const replies: Response[] = [];
+  const fake = (async (url: URL | string, init?: RequestInit) => {
+    requests.push({ url: String(url), init });
+    return replies.shift()!;
+  }) as typeof fetch;
+  const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  const gw = createGateway({ url: 'http://gw.test:4097', apiKey: 'k', textModel: 'gpt-6-luna', imageModel: 'gpt-image-2' }, fake);
+
+  replies.push(json(200, { choices: [{ message: { content: '{"a":1}' } }] }));
+  assert.deepEqual(await gw.startText('s', 'p'), { status: 'completed', kind: 'text', text: '{"a":1}' });
+  const sentBody = JSON.parse(String(requests[0].init?.body));
+  assert.equal(sentBody.model, 'gpt-6-luna');
+  assert.equal(sentBody.reasoning_effort, 'low');
+  const sentHeaders = requests[0].init?.headers as Record<string, string>;
+  assert.equal(sentHeaders.Authorization, 'Bearer k');
+  assert.equal(sentHeaders['X-Executor-Profile'], 'minimal');
+  assert.match(sentHeaders.Prefer, /respond-async/);
+
+  replies.push(json(202, { id: 'g1', status_url: '/v1/images/generations/g1' }));
+  const pending = await gw.startImage('menino');
+  assert.deepEqual(pending, { status: 'pending', kind: 'image', statusUrl: '/v1/images/generations/g1' });
+
+  replies.push(json(200, { status: 'running' }));
+  assert.equal((await gw.poll('/v1/images/generations/g1', 'image')).status, 'pending');
+  replies.push(json(200, { status: 'completed', result: { data: [{ b64_json: 'A'.repeat(200) }] } }));
+  const done = await gw.poll('/v1/images/generations/g1', 'image');
+  assert.equal(done.status === 'completed' && done.kind === 'image' && done.image.length, 200);
+
+  replies.push(json(200, { status: 'failed', error: { message: 'image_generation_failed' } }));
+  await assert.rejects(gw.poll('/v1/images/generations/g1', 'image'), /failed.*image_generation_failed/);
+
+  replies.push(json(202, { id: 'x', status_url: 'https://evil.example/steal' }));
+  await assert.rejects(gw.startImage('menino'), /fora do gateway/);
+
+  replies.push(json(502, { error: { message: 'image_generation_failed' } }));
+  await assert.rejects(gw.startImage('menino'), /502: image_generation_failed/);
 });

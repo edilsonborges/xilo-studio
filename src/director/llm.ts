@@ -1,6 +1,7 @@
 // Módulo 2: Diretor de Arte via LLM. Cada provedor recebe o mesmo prompt e
 // devolve texto que deve conter o SceneGraphJSON; a validação fica em validate.ts.
 
+import { aiText } from '../ai/client';
 import type { LlmProvider, Settings } from '../settings';
 import {
   ACCESSORIES,
@@ -214,6 +215,8 @@ export function callLlm(
   user: string,
 ): Promise<string> {
   switch (provider) {
+    case 'xilo':
+      return aiText(system, user);
     case 'openai':
       return callOpenAI(settings.openaiKey.trim(), settings.openaiModel, system, user);
     case 'gemini':

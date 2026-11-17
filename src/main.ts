@@ -3,7 +3,8 @@ import './style.css';
 import { createTimeline, decodeAudioFile } from './audio';
 import { listVoices, narrate, type GeneratedNarration } from './audio/edge';
 import { initSession } from './auth/session';
-import { Compositor } from './compositor/compositor';
+import { aiImage, aiStatus } from './ai/client';
+import { Compositor, type FrameSource } from './compositor/compositor';
 import { directScenes } from './director';
 import { splitScenes } from './director/splitter';
 import { sanitizeSceneGraph } from './director/validate';
@@ -12,6 +13,8 @@ import { exportVideo, pickMimeType, type ExportFormat } from './export/exporter'
 import { DEFAULT_SETTINGS, llmKey, loadSettings, saveSettings, type Settings } from './settings';
 import type { SceneGraphJSON, Timeline } from './types';
 import { formatTime } from './util';
+import { imagePrompt, storyboard, type IllustrationStyle } from './illustrated/director';
+import { IllustratedEngine } from './illustrated/engine';
 
 const SAMPLE_SCRIPT = `Na Bahia, nos anos 1930, um vaqueiro caminhava pela estrada de terra do sertão.
 O sol queimava a caatinga, e o mandacaru era a única sombra no caminho.
@@ -51,6 +54,9 @@ const ui = {
   progress: $('progress'),
   progressBar: $('progress-bar'),
   modeBadge: $('mode-badge'),
+  videoStyle: $<HTMLSelectElement>('video-style'),
+  styleHint: $('style-hint'),
+  jsonDetails: $('json-details'),
   openSettings: $<HTMLButtonElement>('open-settings'),
   settings: $<HTMLDialogElement>('settings'),
   settingsForm: $<HTMLFormElement>('settings-form'),
@@ -60,6 +66,7 @@ const ui = {
 
 let settings: Settings = loadSettings();
 let engine: SceneEngine | null = null;
+let illustrated: IllustratedEngine | null = null;
 let compositor: Compositor | null = null;
 
 const player = new Audio();
@@ -69,7 +76,8 @@ interface Project {
   file: File;
   buffer: AudioBuffer;
   timeline: Timeline;
-  graph: SceneGraphJSON;
+  /** só no modo 3D; o modo ilustrado não tem SceneGraph */
+  graph: SceneGraphJSON | null;
 }
 
 let audioFile: File | null = null;
@@ -105,8 +113,14 @@ function updateBadge(): void {
   const stamps = narrated && narrated.file === audioFile
     ? 'Edge TTS'
     : settings.transcription === 'openai' && settings.openaiKey.trim() ? 'Whisper' : 'alinhador local';
-  const scenes = settings.llmProvider !== 'none' && llmKey(settings) ? settings.llmProvider : 'regras';
+  const director = settings.llmProvider === 'xilo' ? 'IA do Xilo' : settings.llmProvider;
+  const scenes = settings.videoStyle !== '3d'
+    ? 'imagens por IA'
+    : settings.llmProvider !== 'none' && llmKey(settings) ? `3D, ${director}` : '3D, regras';
   ui.modeBadge.textContent = `Tempos: ${stamps} · Cenas: ${scenes}`;
+  ui.styleHint.textContent = settings.videoStyle === '3d'
+    ? 'Cenas montadas com peças 3D prontas (sertão, vila, floresta). Rápido, mas não desenha nada fora desse kit.'
+    : 'A IA desenha uma imagem para cada cena, no estilo escolhido. Cada imagem leva de alguns segundos a um ou dois minutos.';
 }
 
 function refreshControls(): void {
@@ -124,14 +138,20 @@ function refreshControls(): void {
 
 // ---------- motor e preview ----------
 
-function ensureEngine(): Compositor {
+function ensureCompositor(source: FrameSource): Compositor {
   if (!compositor) {
-    engine = new SceneEngine();
-    compositor = new Compositor(engine, ui.stage);
+    compositor = new Compositor(source, ui.stage);
     compositor.accent = settings.captionAccent;
     compositor.showCaptions = ui.captions.checked;
+  } else {
+    compositor.setSource(source);
   }
   return compositor;
+}
+
+function ensureEngine(): Compositor {
+  engine ??= new SceneEngine();
+  return ensureCompositor(engine);
 }
 
 function updateTime(t: number): void {
@@ -356,12 +376,24 @@ async function generate(): Promise<void> {
     }).`;
 
     const slots = splitScenes(timeline);
+    const ai = await aiStatus();
+    if (settings.videoStyle !== '3d') {
+      if (!ai.images) {
+        addStatus('A IA de imagens não está disponível agora. Fiz o vídeo em 3D.', 'warn');
+      } else if (await generateIllustrated(script, slots, file, buffer, timeline, settings.videoStyle)) {
+        return;
+      }
+    }
+
     step = addStatus(`Dirigindo ${slots.length} cenas…`);
-    const directed = await directScenes(script, slots, settings, (message) => {
+    // sem a IA do servidor (ex.: só o Vite rodando), "IA do Xilo" vira regras
+    const directorSettings = settings.llmProvider === 'xilo' && !ai.text ? { ...settings, llmProvider: 'none' as const } : settings;
+    const directed = await directScenes(script, slots, directorSettings, (message) => {
       step.textContent = message;
     });
     if (directed.warning) addStatus(directed.warning, 'warn');
-    const origin = { llm: `LLM (${settings.llmProvider})`, rules: 'gerador por regras', mixed: 'LLM + regras' }[directed.source];
+    const llmName = directorSettings.llmProvider === 'xilo' ? 'IA do Xilo' : `LLM (${directorSettings.llmProvider})`;
+    const origin = { llm: llmName, rules: 'gerador por regras', mixed: `${llmName} + regras` }[directed.source];
     step.className = 'ok';
     step.textContent = `Cenas: ${directed.graph.scenes.length}, via ${origin}.`;
 
@@ -369,20 +401,9 @@ async function generate(): Promise<void> {
     project = { file, buffer, timeline, graph: directed.graph };
     comp.setTimeline(timeline);
     applyGraph(directed.graph);
-
-    if (audioUrl) URL.revokeObjectURL(audioUrl);
-    audioUrl = URL.createObjectURL(file);
-    player.src = audioUrl;
-    player.currentTime = 0;
-    ui.seek.max = String(buffer.duration);
-    ui.seek.value = '0';
-    ui.stageEmpty.hidden = true;
-    comp.draw(0);
-    updateTime(0);
-    addStatus('Pronto. O preview está tocando.', 'ok');
-    busy = false;
-    refreshControls();
-    setPlaying(true);
+    ui.jsonDetails.hidden = false;
+    showPreview(comp, file, buffer);
+    finishGeneration();
   } catch (err) {
     addStatus((err as Error).message || 'Falha ao gerar o vídeo.', 'error');
   } finally {
@@ -392,7 +413,95 @@ async function generate(): Promise<void> {
   }
 }
 
+function showPreview(comp: Compositor, file: File, buffer: AudioBuffer): void {
+  if (audioUrl) URL.revokeObjectURL(audioUrl);
+  audioUrl = URL.createObjectURL(file);
+  player.src = audioUrl;
+  player.currentTime = 0;
+  ui.seek.max = String(buffer.duration);
+  ui.seek.value = '0';
+  ui.stageEmpty.hidden = true;
+  comp.draw(0);
+  updateTime(0);
+}
+
+function finishGeneration(): void {
+  addStatus('Pronto. O preview está tocando.', 'ok');
+  busy = false;
+  refreshControls();
+  setPlaying(true);
+}
+
+/**
+ * Modo ilustrado: a IA escreve uma descrição por cena e desenha uma imagem para
+ * cada uma. Devolve false se nem a primeira imagem sair, para cair no 3D.
+ */
+async function generateIllustrated(
+  script: string,
+  slots: ReturnType<typeof splitScenes>,
+  file: File,
+  buffer: AudioBuffer,
+  timeline: Timeline,
+  style: IllustrationStyle,
+): Promise<boolean> {
+  let step = addStatus(`Escrevendo a descrição de ${slots.length} cenas…`);
+  const board = await storyboard(script, slots, true);
+  if (board.warning) addStatus(board.warning, 'warn');
+  step.className = 'ok';
+  step.textContent = `Cenas: ${board.scenes.length}, descritas ${board.source === 'ai' ? 'pela IA do Xilo' : 'pelo próprio roteiro'}.`;
+
+  illustrated?.dispose();
+  const source = new IllustratedEngine();
+  illustrated = source;
+  source.setScenes(board.scenes);
+  const comp = ensureCompositor(source);
+  project = { file, buffer, timeline, graph: null };
+  comp.setTimeline(timeline);
+  ui.jsonDetails.hidden = true;
+  showPreview(comp, file, buffer);
+
+  let drawn = 0;
+  let failures = 0;
+  for (const [i, scene] of board.scenes.entries()) {
+    step = addStatus(`Desenhando a cena ${i + 1} de ${board.scenes.length}…`);
+    try {
+      const blob = await aiImage(imagePrompt(scene, style, board.characters));
+      source.setImage(scene.id, await createImageBitmap(blob));
+      drawn++;
+      step.className = 'ok';
+      step.textContent = `Cena ${i + 1} de ${board.scenes.length} desenhada.`;
+      // mostra a cena recém-desenhada no preview
+      player.currentTime = Math.min(scene.startTime + 0.7, buffer.duration);
+      dirty = true;
+    } catch (err) {
+      if (drawn === 0 && i === 0) {
+        step.className = 'warn';
+        step.textContent = `A IA não conseguiu desenhar (${(err as Error).message}). Vou fazer o vídeo em 3D.`;
+        illustrated = null;
+        source.dispose();
+        return false;
+      }
+      failures++;
+      source.markFailed(scene.id);
+      step.className = 'warn';
+      step.textContent = `Cena ${i + 1}: ${(err as Error).message}`;
+      dirty = true;
+    }
+  }
+  if (failures) addStatus(`${failures} cena(s) ficaram sem imagem. Gere de novo para tentar outra vez.`, 'warn');
+  player.currentTime = 0;
+  finishGeneration();
+  return true;
+}
+
 ui.generate.addEventListener('click', () => void generate());
+
+ui.videoStyle.value = settings.videoStyle;
+ui.videoStyle.addEventListener('change', () => {
+  settings = { ...settings, videoStyle: ui.videoStyle.value as Settings['videoStyle'] };
+  saveSettings(settings);
+  updateBadge();
+});
 
 ui.applyJson.addEventListener('click', () => {
   if (!project) return;
@@ -464,7 +573,10 @@ ui.cancelExport.addEventListener('click', () => exporting?.abort());
 
 // ---------- configurações ----------
 
-const SETTING_FIELDS = Object.keys(DEFAULT_SETTINGS) as Array<keyof Settings>;
+// Só o que existe no formulário: voz, velocidade e estilo ficam na tela principal.
+const SETTING_FIELDS = (Object.keys(DEFAULT_SETTINGS) as Array<keyof Settings>).filter(
+  (name) => ui.settingsForm.elements.namedItem(name) !== null,
+);
 
 function field(name: keyof Settings): HTMLInputElement | HTMLSelectElement {
   return ui.settingsForm.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement;

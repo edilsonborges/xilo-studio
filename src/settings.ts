@@ -1,6 +1,8 @@
 // Configurações do usuário. As chaves de API vivem só no localStorage.
 
-export type LlmProvider = 'none' | 'openai' | 'gemini' | 'anthropic';
+export type LlmProvider = 'none' | 'xilo' | 'openai' | 'gemini' | 'anthropic';
+export type VideoStyle = 'xilogravura' | 'aquarela' | 'infantil' | 'cinema' | '3d';
+export const VIDEO_STYLES: readonly VideoStyle[] = ['xilogravura', 'aquarela', 'infantil', 'cinema', '3d'];
 export type TranscriptionProvider = 'local' | 'openai';
 
 export interface Settings {
@@ -17,14 +19,18 @@ export interface Settings {
   /** voz e velocidade da narração gerada pelo Edge TTS */
   ttsVoice: string;
   ttsRate: string;
+  /** ilustrado por IA (um dos estilos) ou o 3D de cordel */
+  videoStyle: VideoStyle;
 }
 
-const STORAGE_KEY = 'xilo.settings.v1';
+const STORAGE_KEY = 'xilo.settings.v2';
+/** versão anterior: sem a IA do Xilo, o padrão era "regras" */
+const LEGACY_KEY = 'xilo.settings.v1';
 const env = import.meta.env;
 
 export const DEFAULT_SETTINGS: Settings = {
   transcription: 'local',
-  llmProvider: 'none',
+  llmProvider: 'xilo',
   openaiKey: '',
   geminiKey: '',
   anthropicKey: '',
@@ -35,13 +41,17 @@ export const DEFAULT_SETTINGS: Settings = {
   captionAccent: '#d8432b',
   ttsVoice: 'pt-BR-AntonioNeural',
   ttsRate: '1',
+  videoStyle: 'xilogravura',
 };
 
 export function loadSettings(): Settings {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const current = localStorage.getItem(STORAGE_KEY);
+    const raw = current ?? localStorage.getItem(LEGACY_KEY);
     if (!raw) return { ...DEFAULT_SETTINGS };
     const parsed = JSON.parse(raw) as Partial<Settings>;
+    // quem vinha da versão sem IA no servidor passa a usar a IA do Xilo
+    if (!current && parsed.llmProvider === 'none') parsed.llmProvider = 'xilo';
     const merged = { ...DEFAULT_SETTINGS };
     for (const key of Object.keys(DEFAULT_SETTINGS) as Array<keyof Settings>) {
       const value = parsed[key];
@@ -50,9 +60,10 @@ export function loadSettings(): Settings {
       }
     }
     if (!['local', 'openai'].includes(merged.transcription)) merged.transcription = 'local';
-    if (!['none', 'openai', 'gemini', 'anthropic'].includes(merged.llmProvider)) {
-      merged.llmProvider = 'none';
+    if (!['none', 'xilo', 'openai', 'gemini', 'anthropic'].includes(merged.llmProvider)) {
+      merged.llmProvider = 'xilo';
     }
+    if (!VIDEO_STYLES.includes(merged.videoStyle)) merged.videoStyle = 'xilogravura';
     return merged;
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -69,6 +80,8 @@ export function saveSettings(settings: Settings): void {
 
 export function llmKey(settings: Settings): string {
   switch (settings.llmProvider) {
+    case 'xilo':
+      return 'servidor';
     case 'openai':
       return settings.openaiKey.trim();
     case 'gemini':

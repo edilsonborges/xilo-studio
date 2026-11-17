@@ -2,7 +2,14 @@
 // título de localização e a legenda karaokê. É este canvas que vai para o
 // preview e para a gravação, então tudo que aparece no vídeo passa por aqui.
 
-import { FRAME_HEIGHT, FRAME_WIDTH, type SceneEngine } from '../engine/engine';
+import { FRAME_HEIGHT, FRAME_WIDTH } from '../engine/engine';
+
+/** O que o compositor precisa de um motor: o 3D (SceneEngine) e o ilustrado servem. */
+export interface FrameSource {
+  readonly canvas: HTMLCanvasElement;
+  render(t: number): void;
+  sceneAt(t: number): { locationTitle?: string; startTime: number; endTime: number } | null;
+}
 import type { Timeline, WordTiming } from '../types';
 import { clamp } from '../util';
 
@@ -74,13 +81,17 @@ export class Compositor {
   accent = '#d8432b';
   showCaptions = true;
 
-  constructor(private readonly engine: SceneEngine, canvas?: HTMLCanvasElement) {
+  constructor(private engine: FrameSource, canvas?: HTMLCanvasElement) {
     this.canvas = canvas ?? document.createElement('canvas');
     this.canvas.width = FRAME_WIDTH;
     this.canvas.height = FRAME_HEIGHT;
     const ctx = this.canvas.getContext('2d', { alpha: false });
     if (!ctx) throw new Error('Canvas 2D indisponível neste navegador.');
     this.ctx = ctx;
+  }
+
+  setSource(engine: FrameSource): void {
+    this.engine = engine;
   }
 
   setTimeline(timeline: Timeline): void {

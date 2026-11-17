@@ -15,6 +15,11 @@ services:
       APP_ORIGIN: ${APP_ORIGIN:-https://xilo.edilson.dev}
       # a porta só aceita conexões locais, então o IP do visitante vem do túnel
       TRUST_CLOUDFLARE_IP: "true"
+      # opencode-gateway nesta mesma máquina (texto e imagens pela assinatura);
+      # a chave GATEWAY_API_KEY fica no .env
+      GATEWAY_URL: ${GATEWAY_URL:-http://host.docker.internal:4097}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       # só na própria máquina: quem expõe para a internet é o túnel do Cloudflare
       - "127.0.0.1:47653:47653"

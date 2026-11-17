@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { z } from 'zod';
+import type { GatewayConfig } from './ai.js';
 
 export interface ServerConfig {
   databasePath: string;
@@ -13,6 +14,8 @@ export interface ServerConfig {
   adminEmails: string[];
   /** Confia no cabeçalho CF-Connecting-IP (só quando o tráfego chega pelo túnel). */
   trustCloudflareIp: boolean;
+  /** opencode-gateway (texto e imagens pela assinatura); ausente desliga a IA do servidor */
+  gateway?: GatewayConfig;
 }
 
 const emailList = (value: string | undefined): string[] =>
@@ -37,6 +40,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     distPath: resolve(env.DIST_PATH ?? 'dist'),
     adminEmails: emailList(env.ADMIN_EMAILS),
     trustCloudflareIp: env.TRUST_CLOUDFLARE_IP === 'true',
+    gateway: env.GATEWAY_URL?.trim() && env.GATEWAY_API_KEY?.trim()
+      ? {
+        url: env.GATEWAY_URL.trim(),
+        apiKey: env.GATEWAY_API_KEY.trim(),
+        textModel: env.GATEWAY_TEXT_MODEL?.trim() || 'gpt-6-luna',
+        imageModel: env.GATEWAY_IMAGE_MODEL?.trim() || 'gpt-image-2',
+      }
+      : undefined,
   };
   validateConfig(config);
   return config;
