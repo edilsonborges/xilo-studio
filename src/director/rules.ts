@@ -92,9 +92,24 @@ const ACTIONS: Array<[AnimationName, Lexicon]> = [
   ['clap', { stems: ['aplau', 'palmas', 'bateu palma'] }],
   ['sit', { stems: ['sent', 'descans', 'assist', 'esperav'] }],
   ['point', { stems: ['apont', 'mostrou', 'indicou'] }],
+  ['fall', { stems: ['caiu', 'caia', 'tropec', 'desab', 'desmai', 'escorreg'] }],
+  ['hug', { stems: ['abrac'] }],
+  ['work', { stems: ['trabalh', 'capin', 'enxada', 'plantou', 'plantav', 'colheu', 'colhia', 'cavou', 'cavav', 'martel', 'construi', 'labut'] }],
+  ['eat', { stems: ['comeu', 'comia', 'comendo', 'almocou', 'almocav', 'jantou', 'jantav', 'bebeu', 'bebia', 'mastig', 'merend'] }],
+  ['carry', { stems: ['carreg', 'levava', 'trouxe', 'trazia', 'balde', 'fardo'] }],
   ['walk', { stems: ['andou', 'andava', 'andar', 'andando', 'caminhav', 'caminhou', 'caminhar', 'caminhand', 'partiu', 'partir', 'viaj', 'seguiu', 'seguir', 'saiu', 'sair', 'chegou', 'chegar', 'voltou', 'voltar', 'atravess', 'march', 'passeav'] }],
   ['talk', { stems: ['disse', 'falou', 'falava', 'contou', 'contava', 'pergunt', 'respond', 'gritou', 'chamou', 'convers', 'explic', 'avisou', 'pediu', 'prometeu'] }],
-  ['gesture', { stems: ['acen', 'ergue', 'levant', 'abrac', 'agradec', 'cumpriment'] }],
+  ['gesture', { stems: ['acen', 'cumpriment', 'despedi', 'saudou', 'deu adeus'] }],
+];
+
+/** Reações: se alguém faz algo e outro reage, a reação vai para quem assiste. */
+const REACTIONS: Array<[AnimationName, Lexicon]> = [
+  ['surprised', { stems: ['espant', 'surpres', 'surpreend', 'assust', 'nao acredit', 'admir', 'boquiabert', 'incredul', 'susto'] }],
+  ['laugh', { stems: ['riu', 'riam', 'rindo', 'gargalh', 'risada', 'sorri', 'achou graca'] }],
+  ['cry', { stems: ['chor', 'lagrim', 'soluc', 'pranto', 'lament'] }],
+  ['nod', { stems: ['concord', 'assentiu', 'aceitou', 'consentiu'] }],
+  ['deny', { stems: ['negou', 'recus', 'discord', 'nao aceit'] }],
+  ['think', { stems: ['pensou', 'pensav', 'refleti', 'lembrou', 'lembrav', 'duvid', 'matut', 'ficou pensando'] }],
 ];
 
 const COMPANY: Lexicon = {
@@ -313,14 +328,19 @@ export function generateScenesByRules(slots: SceneSlot[], script: string): Scene
     time = firstMatch(count, TIME_WORDS) ?? time;
 
     // ----- ação e personagens -----
-    let animation: AnimationName = firstMatch(count, ACTIONS) ?? (index % 3 === 2 ? 'gesture' : 'idle');
+    // sem ação citada, o personagem fica parado: acenar só quando o roteiro pede
+    const doing = firstMatch(count, ACTIONS);
+    const reaction = firstMatch(count, REACTIONS);
+    // alguém faz e outro reage ("ele corria e os vizinhos não acreditaram"): a reação é de quem assiste
+    const watcherReacts = doing !== null && reaction !== null && doing !== 'talk' && count(COMPANY) > 0;
+    let animation: AnimationName = doing && (watcherReacts || !reaction || doing !== 'talk') ? doing : reaction ?? doing ?? 'idle';
     const vehicle = indoor ? null : firstMatch(count, VEHICLE_WORDS);
     const travels = vehicle !== null && (animation === 'drive' || animation === 'ride' || animation === 'walk' || animation === 'run' || count({ stems: ['viaj', 'partiu', 'seguiu', 'chegou', 'foi de', 'naveg'] }) > 0);
     if (vehicle && travels) animation = SEAT_POSE[vehicle] ?? animation;
 
-    const hasCompany = animation !== 'sleep' && (count(COMPANY) > 0 || animation === 'talk' || animation === 'dance');
+    const hasCompany = animation !== 'sleep' && (count(COMPANY) > 0 || animation === 'talk' || animation === 'dance' || animation === 'hug');
     const dir = index % 2 === 0 ? 1 : -1;
-    const walking = (animation === 'walk' || animation === 'run') && !vehicle;
+    const walking = (animation === 'walk' || animation === 'run' || animation === 'carry') && !vehicle;
     const from: Vec3 = walking ? [-1.7 * dir, 0, -0.8] : [hasCompany ? -0.85 : 0, 0, 0];
     const to: Vec3 = [1.5 * dir, 0, 1.4];
 
@@ -351,20 +371,24 @@ export function generateScenesByRules(slots: SceneSlot[], script: string): Scene
     const characters: CharacterDef[] = [protagonist];
     if (hasCompany) {
       const kind = firstMatch(count, KIND_WORDS.filter(([k]) => k !== heroKind)) ?? (heroKind === 'woman' ? 'man' : 'woman');
+      const SHARED: AnimationName[] = ['dance', 'celebrate', 'clap', 'pray', 'sit', 'hug', 'eat', 'laugh', 'cry', 'work'];
+      // quem acompanha: reage, faz junto, anda junto ou escuta (nunca "fala" por padrão)
       const companionAnimation: AnimationName =
-        animation === 'walk' || animation === 'run' ? animation
-          : animation === 'talk' ? 'idle'
-            : animation === 'dance' || animation === 'celebrate' || animation === 'clap' || animation === 'pray' || animation === 'sit' ? animation
-              : 'talk';
+        watcherReacts ? reaction!
+          : animation === 'walk' || animation === 'run' ? animation
+            : animation === 'carry' ? 'walk'
+              : SHARED.includes(animation) ? animation
+                : 'listen';
+      const follows = walking && !watcherReacts;
       const companion: CharacterDef = {
         id: 'companion',
         ...COMPANION_LOOK,
         ...(kind === 'child' ? { accessory: 'cap' as Accessory } : kind === 'elderly' ? { accessory: 'headscarf' as Accessory } : {}),
         kind,
-        position: walking ? [from[0] - 1.1 * dir, 0, from[2] - 0.6] : [0.85, 0, 0.15],
+        position: follows ? [from[0] - 1.1 * dir, 0, from[2] - 0.6] : walking ? [1.9 * -dir, 0, 1.2] : [0.85, 0, 0.15],
         animation: companionAnimation,
       };
-      if (walking) companion.targetPosition = [to[0] - 1.1 * dir, 0, to[2] - 0.6];
+      if (follows) companion.targetPosition = [to[0] - 1.1 * dir, 0, to[2] - 0.6];
       characters.push(companion);
     }
 

@@ -40,6 +40,8 @@ export interface CharacterRig {
   /** idosos se movem mais devagar e com o tronco curvado */
   speed: number;
   stoop: number;
+  /** saco que aparece só na ação "carry" */
+  carried: THREE.Mesh;
 }
 
 const HIP_HEIGHT = 0.86;
@@ -203,6 +205,11 @@ export function createCharacter(config: CharacterConfig): CharacterRig {
   const legLeft = buildLeg(hips, -1, config.pantsColor, lower);
   const legRight = buildLeg(hips, 1, config.pantsColor, lower);
 
+  const carried = part(box(0.42, 0.34, 0.3), '#b8955a', { outlineWidth: 0.02 });
+  carried.position.set(0, 0.22, 0.4);
+  carried.visible = false;
+  torso.add(carried);
+
   if (kind === 'child') {
     // criança: corpo menor e cabeça proporcionalmente maior
     root.scale.setScalar(0.62);
@@ -229,7 +236,44 @@ export function createCharacter(config: CharacterConfig): CharacterRig {
     kind,
     speed: kind === 'elderly' ? 0.75 : kind === 'child' ? 1.15 : 1,
     stoop: kind === 'elderly' ? 0.16 : 0,
+    carried,
   };
+}
+
+/**
+ * Gestos e reações que tocam uma vez (duração em segundos) e devolvem o
+ * personagem ao estado de base. Sem isso, um aceno dura a cena inteira.
+ */
+export const ONE_SHOT: Partial<Record<AnimationName, number>> = {
+  gesture: 2.2,
+  point: 2.6,
+  clap: 2.8,
+  celebrate: 3,
+  surprised: 2.8,
+  laugh: 3.2,
+  nod: 1.8,
+  deny: 2,
+  hug: 3.2,
+};
+
+/** Ações só de tronco, braços e cabeça: funcionam também sentado. */
+export const UPPER_BODY: ReadonlySet<AnimationName> = new Set<AnimationName>([
+  'idle', 'listen', 'talk', 'gesture', 'point', 'clap', 'surprised', 'laugh', 'cry', 'nod', 'deny', 'think', 'eat',
+]);
+
+const FADE = 0.35;
+const smooth = (x: number): number => {
+  const k = Math.min(1, Math.max(0, x));
+  return k * k * (3 - 2 * k);
+};
+
+/** Quanto do gesto aparece em `elapsed` segundos de cena: sobe, segura e desce. */
+export function oneShotWeight(animation: AnimationName, elapsed: number, phase = 0): number {
+  const duration = ONE_SHOT[animation];
+  if (!duration) return 1;
+  // cada personagem começa num instante um pouco diferente, para não reagirem em coro
+  const local = elapsed - (0.35 + (phase % 0.7));
+  return Math.min(smooth(local / FADE), smooth((duration - local) / FADE));
 }
 
 export interface PoseOptions {
@@ -239,6 +283,10 @@ export interface PoseOptions {
   seatHeight?: number;
   /** o veículo/cavalo está andando (pedala, balança) */
   moving?: boolean;
+  /** o personagem está se deslocando a pé nesta cena ("carry" anda) */
+  travelling?: boolean;
+  /** segundos desde o início da cena (queda acontece uma vez) */
+  elapsed?: number;
 }
 
 /** Sentado: coxas para a frente, canelas para baixo. */
@@ -270,8 +318,9 @@ export function poseCharacter(
   rig.body.position.set(0, 0, 0);
   rig.hips.position.y = HIP_HEIGHT;
   rig.torso.scale.set(1, 1, 1);
-  rig.mouth.scale.y = 1;
+  rig.mouth.scale.set(1, 1, 1);
   for (const eye of rig.eyes) eye.scale.y = 1;
+  rig.carried.visible = false;
 
   const t = time * rig.speed;
   const p = rig.phase;
@@ -402,7 +451,6 @@ export function poseCharacter(
       rig.armL.rotation.z = -0.1 - 0.02 * breathe;
       rig.elbowL.rotation.x = -0.15;
       rig.torso.scale.y = 1 + 0.012 * breathe;
-      if (options.seatHeight !== undefined) seated(rig, options.seatHeight);
       break;
     }
     case 'gesture': {
@@ -482,6 +530,151 @@ export function poseCharacter(
       for (const eye of rig.eyes) eye.scale.y = 0.15;
       break;
     }
+    case 'listen': {
+      // parado, atento a quem fala: quase sem balanço, com um aceno de cabeça de vez em quando
+      rig.torso.scale.y = 1 + 0.012 * breathe;
+      rig.armL.rotation.z = -0.07;
+      rig.armR.rotation.z = 0.07;
+      rig.head.rotation.x = 0.16 * Math.max(0, Math.sin(t * 1.3 + p)) ** 6;
+      rig.head.rotation.z = 0.04 * Math.sin(t * 0.4 + p);
+      break;
+    }
+    case 'surprised': {
+      // leva um susto: tronco para trás, mãos ao peito, boca e olhos abertos
+      rig.torso.rotation.x = -0.14 + rig.stoop;
+      rig.head.rotation.x = -0.12;
+      rig.armL.rotation.set(-0.55, 0, -0.55);
+      rig.armR.rotation.set(-0.55, 0, 0.55);
+      rig.elbowL.rotation.x = -1.5;
+      rig.elbowR.rotation.x = -1.5;
+      rig.mouth.scale.set(0.6, 6, 1);
+      for (const eye of rig.eyes) eye.scale.y = 1.5;
+      rig.body.position.y = 0.02 * Math.abs(Math.sin(t * 9 + p));
+      break;
+    }
+    case 'laugh': {
+      const shake = Math.sin(t * 14 + p);
+      rig.torso.rotation.x = -0.1 + 0.07 * shake + rig.stoop;
+      rig.head.rotation.x = -0.28 + 0.05 * shake;
+      rig.armR.rotation.x = -0.45;
+      rig.elbowR.rotation.x = -1.5;
+      rig.armL.rotation.z = -0.25;
+      rig.elbowL.rotation.z = 0.5;
+      rig.body.position.y = 0.015 * Math.abs(shake);
+      rig.mouth.scale.set(1.3, 4.5, 1);
+      for (const eye of rig.eyes) eye.scale.y = 0.3;
+      break;
+    }
+    case 'cry': {
+      // cabeça baixa, mãos no rosto, ombros sacudindo
+      rig.torso.rotation.x = 0.22 + 0.03 * Math.sin(t * 10 + p) + rig.stoop;
+      rig.head.rotation.x = 0.45;
+      rig.armL.rotation.set(-1, 0, 0.28);
+      rig.armR.rotation.set(-1, 0, -0.28);
+      rig.elbowL.rotation.x = -1.95;
+      rig.elbowR.rotation.x = -1.95;
+      for (const eye of rig.eyes) eye.scale.y = 0.15;
+      break;
+    }
+    case 'nod': {
+      rig.head.rotation.x = 0.3 * Math.max(0, Math.sin(t * 7 + p));
+      rig.armL.rotation.z = -0.07;
+      rig.armR.rotation.z = 0.07;
+      break;
+    }
+    case 'deny': {
+      rig.head.rotation.y = 0.45 * Math.sin(t * 7 + p);
+      rig.armR.rotation.x = -0.7;
+      rig.armR.rotation.z = 0.2;
+      rig.elbowR.rotation.x = -1.1;
+      rig.elbowR.rotation.z = 0.3 * Math.sin(t * 7 + p);
+      rig.armL.rotation.z = -0.07;
+      break;
+    }
+    case 'think': {
+      // mão no queixo, outro braço cruzado, cabeça inclinada
+      rig.armR.rotation.x = -0.6;
+      rig.elbowR.rotation.x = -2.05;
+      rig.armL.rotation.set(-0.45, 0, 0.35);
+      rig.elbowL.rotation.x = -1.2;
+      rig.head.rotation.z = 0.13;
+      rig.head.rotation.y = 0.12 * Math.sin(t * 0.6 + p);
+      rig.head.rotation.x = -0.05;
+      rig.torso.scale.y = 1 + 0.012 * breathe;
+      break;
+    }
+    case 'carry': {
+      // leva um saco nos braços; se está se deslocando, anda
+      rig.carried.visible = true;
+      rig.armL.rotation.x = -0.95;
+      rig.armR.rotation.x = -0.95;
+      rig.armL.rotation.z = 0.12;
+      rig.armR.rotation.z = -0.12;
+      rig.elbowL.rotation.x = -0.75;
+      rig.elbowR.rotation.x = -0.75;
+      rig.torso.rotation.x = -0.06 + rig.stoop;
+      if (options.travelling) {
+        const w = t * 6 + p;
+        rig.legL.rotation.x = 0.5 * Math.sin(w);
+        rig.legR.rotation.x = -0.5 * Math.sin(w);
+        rig.kneeL.rotation.x = 0.8 * Math.max(0, -Math.cos(w));
+        rig.kneeR.rotation.x = 0.8 * Math.max(0, Math.cos(w));
+        rig.hips.position.y = HIP_HEIGHT - 0.03 + 0.03 * Math.abs(Math.cos(w));
+      }
+      break;
+    }
+    case 'work': {
+      // golpes de enxada: sobe as mãos juntas e desce dobrando o tronco
+      const w = t * 4 + p;
+      const down = Math.max(0, Math.sin(w));
+      rig.torso.rotation.x = 0.1 + 0.45 * down + rig.stoop;
+      rig.armL.rotation.x = -2.3 + 1.6 * down;
+      rig.armR.rotation.x = -2.3 + 1.6 * down;
+      rig.armL.rotation.z = 0.15;
+      rig.armR.rotation.z = -0.15;
+      rig.elbowL.rotation.x = -0.4;
+      rig.elbowR.rotation.x = -0.4;
+      rig.kneeL.rotation.x = 0.25 * down;
+      rig.kneeR.rotation.x = 0.25 * down;
+      rig.legL.rotation.x = -0.12 * down;
+      rig.legR.rotation.x = -0.12 * down;
+      rig.hips.position.y = HIP_HEIGHT - 0.04 * down;
+      break;
+    }
+    case 'eat': {
+      // leva a mão à boca e mastiga
+      const bite = Math.max(0, Math.sin(t * 2.6 + p));
+      rig.armR.rotation.x = -0.75;
+      rig.elbowR.rotation.x = -1.0 - 1.05 * bite;
+      rig.armL.rotation.x = -0.5;
+      rig.elbowL.rotation.x = -0.9;
+      rig.head.rotation.x = 0.1 * bite;
+      rig.mouth.scale.y = 1 + 2 * Math.abs(Math.sin(t * 8 + p)) * (1 - bite);
+      break;
+    }
+    case 'hug': {
+      rig.torso.rotation.x = 0.14 + rig.stoop;
+      rig.armL.rotation.set(-1.3, 0, 0.4);
+      rig.armR.rotation.set(-1.3, 0, -0.4);
+      rig.elbowL.rotation.x = -0.55;
+      rig.elbowR.rotation.x = -0.55;
+      rig.head.rotation.z = 0.15;
+      for (const eye of rig.eyes) eye.scale.y = 0.15;
+      break;
+    }
+    case 'fall': {
+      // tropeça e cai de costas uma vez; depois fica no chão
+      const k = smooth(((options.elapsed ?? 99) - 0.5) / 0.55);
+      rig.body.rotation.x = (-Math.PI / 2) * k;
+      rig.body.position.set(0, 0.15 * k, 0.9 * k);
+      rig.torso.rotation.x = rig.stoop * (1 - k);
+      rig.armL.rotation.z = -0.5 - 1.6 * Math.sin(Math.PI * k);
+      rig.armR.rotation.z = 0.5 + 1.6 * Math.sin(Math.PI * k);
+      rig.legL.rotation.x = -0.5 * Math.sin(Math.PI * k);
+      rig.kneeR.rotation.x = 0.5 * k;
+      rig.mouth.scale.set(0.7, 1 + 4 * (1 - k) * Math.min(1, (options.elapsed ?? 0) * 3), 1);
+      break;
+    }
     default: {
       // idle
       rig.torso.scale.y = 1 + 0.015 * breathe;
@@ -492,7 +685,58 @@ export function poseCharacter(
       rig.armR.rotation.x = -0.05 * Math.sin(t * 1.1 + p);
       rig.head.rotation.y = 0.25 * Math.sin(t * 0.5 + p);
       rig.torso.rotation.y = 0.04 * Math.sin(t * 0.5 + p);
-      if (options.seatHeight !== undefined) seated(rig, options.seatHeight);
     }
   }
+  // sentado, as ações de tronco e braços continuam valendo
+  if (options.seatHeight !== undefined && UPPER_BODY.has(animation)) seated(rig, options.seatHeight);
+}
+
+const NUMBERS_PER_RIG = 12 * 3 + 3 + 1 + 3 + 3 + 2;
+
+function capture(rig: CharacterRig, out: number[]): number[] {
+  out.length = 0;
+  for (const j of [rig.body, rig.hips, rig.torso, rig.head, rig.armL, rig.armR, rig.elbowL, rig.elbowR, rig.legL, rig.legR, rig.kneeL, rig.kneeR]) {
+    out.push(j.rotation.x, j.rotation.y, j.rotation.z);
+  }
+  out.push(rig.body.position.x, rig.body.position.y, rig.body.position.z, rig.hips.position.y);
+  out.push(rig.torso.scale.x, rig.torso.scale.y, rig.torso.scale.z, rig.mouth.scale.x, rig.mouth.scale.y, rig.mouth.scale.z);
+  out.push(rig.eyes[0].scale.y, rig.eyes[1].scale.y);
+  return out;
+}
+
+function restore(rig: CharacterRig, v: number[]): void {
+  let i = 0;
+  for (const j of [rig.body, rig.hips, rig.torso, rig.head, rig.armL, rig.armR, rig.elbowL, rig.elbowR, rig.legL, rig.legR, rig.kneeL, rig.kneeR]) {
+    j.rotation.set(v[i++], v[i++], v[i++]);
+  }
+  rig.body.position.set(v[i++], v[i++], v[i++]);
+  rig.hips.position.y = v[i++];
+  rig.torso.scale.set(v[i++], v[i++], v[i++]);
+  rig.mouth.scale.set(v[i++], v[i++], v[i++]);
+  rig.eyes[0].scale.y = v[i++];
+  rig.eyes[1].scale.y = v[i++];
+}
+
+const poseA: number[] = [];
+const poseB: number[] = [];
+
+/**
+ * Pose final do personagem no instante `time`. Gestos de uma vez (ONE_SHOT) são
+ * misturados com o estado de base conforme o tempo de cena; o resto é a pose
+ * direta. Continua função pura do tempo: o mesmo instante dá o mesmo quadro.
+ */
+export function animateCharacter(rig: CharacterRig, animation: AnimationName, time: number, options: PoseOptions = {}): void {
+  const weight = oneShotWeight(animation, options.elapsed ?? 0, rig.phase);
+  if (weight >= 1) {
+    poseCharacter(rig, animation, time, options);
+    return;
+  }
+  // base: escutando (ou sentado, se estiver num assento)
+  poseCharacter(rig, 'listen', time, options);
+  if (weight <= 0) return;
+  capture(rig, poseA);
+  poseCharacter(rig, animation, time, options);
+  capture(rig, poseB);
+  for (let i = 0; i < NUMBERS_PER_RIG; i++) poseB[i] = poseA[i] + (poseB[i] - poseA[i]) * weight;
+  restore(rig, poseB);
 }

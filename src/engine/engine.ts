@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import type { SceneDef, SceneGraphJSON } from '../types';
 import { clamp, hashString } from '../util';
 import { computeCameraPose } from './camera';
-import { createCharacter, poseCharacter, type CharacterRig } from './character';
+import { UPPER_BODY, animateCharacter, createCharacter, type CharacterRig } from './character';
 import { createEnvironment, type EnvironmentObject } from './environment';
 import { createProp, type PropObject } from './props';
 import { StylePass } from './post';
@@ -177,7 +177,13 @@ export class SceneEngine {
         root.position.lerpVectors(c.start, c.end, c.moves ? progress : 0);
         root.rotation.y = c.facing;
       }
-      poseCharacter(c.rig, c.animation, t, { restHeight: c.restHeight, seatHeight, moving });
+      animateCharacter(c.rig, c.animation, t, {
+        restHeight: c.restHeight,
+        seatHeight,
+        moving,
+        travelling: c.moves && progress < 1,
+        elapsed: t - def.startTime,
+      });
       if (def.camera.movement === 'follow_character' && def.camera.target === c.id) {
         follow = { start: c.seatedOn ? c.seatedOn.start.clone().add(tmp) : c.start, current: root.position.clone() };
       }
@@ -235,12 +241,14 @@ export class SceneEngine {
       if (mount?.object.seat) {
         built.seatedOn = mount;
         built.moves = false;
-        // em cima de um veículo, a pose é a do assento (dirigir, montar, sentar); conversar continua valendo
-        if (c.animation !== 'talk') built.animation = mount.object.seat.pose;
-      } else if (c.animation === 'sit' || c.animation === 'drive' || c.animation === 'ride') {
+        // a pose é a do assento (dirigir, montar, sentar); num assento comum,
+        // gestos e reações de tronco continuam valendo (aplaudir, comer, rir)
+        const keeps = c.animation === 'talk' || (mount.object.seat.pose === 'sit' && c.animation !== 'idle' && UPPER_BODY.has(c.animation));
+        if (!keeps) built.animation = mount.object.seat.pose;
+      } else if (c.animation === 'sit' || c.animation === 'eat' || c.animation === 'drive' || c.animation === 'ride') {
         const seat = seats.find((s) => s.start.distanceTo(start) < SEAT_SNAP_DISTANCE);
         if (seat) built.seatedOn = seat;
-        if (c.animation !== 'sit' && !seat) built.animation = 'sit';
+        if ((c.animation === 'drive' || c.animation === 'ride') && !seat) built.animation = 'sit';
       } else if (c.animation === 'sleep') {
         const bed = beds.find((b) => b.start.distanceTo(start) < BED_SNAP_DISTANCE);
         if (bed) {
@@ -276,7 +284,9 @@ export class SceneEngine {
       if (nearest && nearest.start.distanceTo(c.start) < 5) {
         const toOther = Math.atan2(nearest.start.x - c.start.x, nearest.start.z - c.start.z);
         // 0 é de frente para a câmera; vira só parte do caminho para o rosto continuar visível
-        c.facing = clamp(toOther, -Math.PI / 2, Math.PI / 2) * 0.55;
+        // quem escuta ou abraça vira mais para o outro
+        const turn = c.animation === 'listen' || c.animation === 'hug' ? 0.85 : 0.55;
+        c.facing = clamp(toOther, -Math.PI / 2, Math.PI / 2) * turn;
       }
     }
 
