@@ -3,15 +3,22 @@
 
 import { aiText } from '../ai/client';
 import type { LlmProvider, Settings } from '../settings';
+import { SCENARIOS } from '../scenarios';
 import {
   ACCESSORIES,
   ANIMATIONS,
   CAMERA_MOVEMENTS,
+  CHARACTER_KINDS,
   PARTICLES,
   PRESETS,
   PROP_TYPES,
+  TIMES_OF_DAY,
+  WEATHERS,
   type SceneSlot,
 } from '../types';
+import { MOUNTABLE } from './validate';
+
+const scenarioList = PRESETS.map((id) => `  - "${id}"${SCENARIOS[id].indoor ? ' (indoor)' : ''}: ${SCENARIOS[id].hint}`).join('\n');
 
 const list = (values: readonly string[]): string => values.map((v) => `"${v}"`).join(' | ');
 
@@ -33,7 +40,9 @@ Reply with a single JSON object and nothing else (no prose, no markdown fences),
         "skyColor": "#e8c391",
         "groundColor": "#c28d53",
         "fogColor": "#e8c391",
-        "particles": "dust"
+        "particles": "dust",
+        "weather": "clear",
+        "timeOfDay": "day"
       },
       "camera": {
         "movement": "zoom_in",
@@ -51,23 +60,41 @@ Reply with a single JSON object and nothing else (no prose, no markdown fences),
           "shirtColor": "#f4f1ea",
           "pantsColor": "#3d352e",
           "accessory": "straw_hat",
+          "kind": "man",
           "animation": "walk"
+        },
+        {
+          "id": "neighbor",
+          "position": [1.5, 0, -1],
+          "skinColor": "#a9683a",
+          "shirtColor": "#c9483b",
+          "pantsColor": "#4a5a78",
+          "accessory": "none",
+          "kind": "woman",
+          "animation": "drive",
+          "mount": "car_1"
         }
       ],
       "props": [
-        { "type": "rustic_house", "position": [-4, 0, -3], "rotationY": 0.5, "scale": 1.0, "color": "#d9a066" }
+        { "type": "rustic_house", "position": [-4, 0, -3], "rotationY": 0.5, "scale": 1.0, "color": "#d9a066" },
+        { "id": "car_1", "type": "car", "position": [3, 0, -6], "targetPosition": [3, 0, 4], "rotationY": 0, "scale": 1.0 }
       ]
     }
   ]
 }
 
 Allowed values (anything else is discarded by the engine):
-- environment.preset: ${list(PRESETS)}
+- environment.preset (pick the place that matches the narration):
+${scenarioList}
 - environment.particles: ${list(PARTICLES)}
+- environment.weather (optional, default from the preset): ${list(WEATHERS)}
+- environment.timeOfDay (optional, default from the preset): ${list(TIMES_OF_DAY)}
 - camera.movement: ${list(CAMERA_MOVEMENTS)}
 - characters[].animation: ${list(ANIMATIONS)}
+- characters[].kind: ${list(CHARACTER_KINDS)}
 - characters[].accessory: ${list(ACCESSORIES)}
 - props[].type: ${list(PROP_TYPES)}
+- props that can be mounted or sat on (characters[].mount = the prop id): ${list([...MOUNTABLE])}
 
 Contract:
 - Return exactly one scene per slot, in order, copying each slot's id, startTime and endTime unchanged. Timing is owned by the audio, not by you.
@@ -83,6 +110,10 @@ Staging, so the result looks good:
 - The frame is tall and narrow: at the origin only about 5 units of width are visible. Keep characters within x from -2 to 2, and props within x from -4.5 to 4.5 and z from -11 to 3, with larger props further back so they do not hide the characters.
 - "interior_night" is a room with a back wall at z = -5.5, so keep everything in front of it and prefer bed, table and lantern there. A "sleep" character placed at the same position as a bed lies on it.
 - "road" is a long strip that runs through its position along Z (use rotationY to turn it).
+- Indoor presets are rooms with a back wall at z = -5.5: keep everything in front of it.
+- Match the cast to the story: use "kind" for children, women and elderly people (keep it identical for the same id), and pick the action that is narrated (run, jump, dance, sit, point, clap, celebrate, pray, ride, drive...).
+- Vehicles and animals (car, truck, bus, bicycle, motorcycle, boat, cart, horse, dog, bird...) can move: give them "targetPosition" and they travel there during the scene, facing the direction they go. A character with "mount" set to a prop id rides or drives it (give that prop an "id"); use "drive" for car, truck and bus, "ride" for bicycle, motorcycle and horse, "sit" for boat, cart, chair, bench, sofa, pew and desk.
+- Use weather and timeOfDay when the narration mentions rain, storm, fog, wind, night, dawn or sunset; "crane_up" reveals a place, "handheld" adds tension.
 - Vary camera movement and composition from scene to scene, and choose the preset, particles and props that match the mood of the narration. Use 1 to 3 characters and 2 to 6 props per scene.`;
 
 export interface KnownCharacter {

@@ -3,15 +3,21 @@
 import * as THREE from 'three';
 import type { PresetPalette } from '../presets';
 import type { PropType, Vec3 } from '../types';
+import * as scenery from './scenery';
+import type { BuildContext, Built, Motion, Seat } from './scenery';
 import { part } from './toon';
+import * as vehicles from './vehicles';
 
 export interface PropObject {
   group: THREE.Group;
   type: PropType;
-  /** animação leve em função do tempo absoluto (chama do lampião, cabeça do bicho) */
-  update?: (t: number) => void;
+  /** animação em função do tempo absoluto e do quanto o objeto andou na cena */
+  update?: (t: number, motion: Motion) => void;
   /** altura da superfície de descanso (cama), para o personagem deitar em cima */
   restHeight?: number;
+  /** onde um personagem senta ou vai montado (cadeira, banco, carro, cavalo) */
+  seat?: Seat;
+  usedLight?: boolean;
 }
 
 export interface PropOptions {
@@ -21,7 +27,56 @@ export interface PropOptions {
   seed?: number;
   /** false quando a cena já atingiu o limite de luzes pontuais */
   allowLight?: boolean;
+  /** cena noturna: janelas e postes acendem */
+  night?: boolean;
 }
+
+type Builder = (g: THREE.Group, ctx: BuildContext) => Built;
+
+const BUILDERS: Partial<Record<PropType, Builder>> = {
+  building: scenery.building,
+  church: scenery.church,
+  barn: scenery.barn,
+  market_stall: scenery.marketStall,
+  bandstand: scenery.bandstand,
+  lamp_post: scenery.lampPost,
+  bench: scenery.bench,
+  pole: scenery.pole,
+  well: scenery.well,
+  palm_tree: scenery.palmTree,
+  bush: scenery.bush,
+  rock: scenery.rock,
+  flowers: scenery.flowers,
+  cornfield: scenery.cornfield,
+  cloud_island: scenery.cloudIsland,
+  bridge: scenery.bridge,
+  pier: scenery.pier,
+  barrel: scenery.barrel,
+  umbrella: scenery.umbrella,
+  chair: scenery.chair,
+  sofa: scenery.sofa,
+  tv: scenery.tv,
+  plant: scenery.plant,
+  stove: scenery.stove,
+  desk: scenery.desk,
+  blackboard: scenery.blackboard,
+  pew: scenery.pew,
+  altar: scenery.altar,
+  bonfire: scenery.bonfire,
+  bunting: scenery.bunting,
+  car: vehicles.car,
+  truck: vehicles.truck,
+  bus: vehicles.bus,
+  bicycle: vehicles.bicycle,
+  motorcycle: vehicles.motorcycle,
+  boat: vehicles.boat,
+  cart: vehicles.cart,
+  horse: vehicles.horse,
+  dog: vehicles.dog,
+  chicken: vehicles.chicken,
+  bird: vehicles.bird,
+  goat: vehicles.goat,
+};
 
 const box = (w: number, h: number, d: number): THREE.BufferGeometry => new THREE.BoxGeometry(w, h, d);
 
@@ -215,10 +270,17 @@ export function createProp(
   color: string | undefined,
   options: PropOptions,
 ): PropObject {
-  const { palette, seed = 0, allowLight = true } = options;
+  const { palette, seed = 0, allowLight = true, night = false } = options;
   const group = new THREE.Group();
   group.name = `prop:${type}`;
   const result: PropObject = { group, type };
+
+  const builder = BUILDERS[type];
+  if (builder) {
+    const built = builder(group, { palette, seed, color, allowLight, night });
+    Object.assign(result, built);
+    if (built.restHeight !== undefined) result.restHeight = built.restHeight * scale;
+  }
 
   switch (type) {
     case 'rustic_house':
@@ -239,18 +301,23 @@ export function createProp(
     case 'table':
       table(group, color, palette);
       break;
-    case 'lantern':
-      result.update = lantern(group, color, allowLight, seed);
+    case 'lantern': {
+      const update = lantern(group, color, allowLight, seed);
+      result.update = (t) => update(t);
+      result.usedLight = allowLight;
       break;
+    }
     case 'road':
       road(group, color, palette);
       break;
     case 'fence':
       fence(group, color, palette);
       break;
-    case 'animal':
-      result.update = animal(group, color, palette, seed);
+    case 'animal': {
+      const update = animal(group, color, palette, seed);
+      result.update = (t) => update(t);
       break;
+    }
   }
 
   group.position.set(position[0], position[1], position[2]);

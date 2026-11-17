@@ -21,7 +21,7 @@ const v = (a: Vec3): THREE.Vector3 => new THREE.Vector3(a[0], a[1], a[2]);
 
 const ORBIT_DEFAULT_SWEEP = 0.8;
 
-export function computeCameraPose(def: CameraDef, progress: number, follow?: FollowTarget): CameraPose {
+export function computeCameraPose(def: CameraDef, progress: number, follow?: FollowTarget, t = 0): CameraPose {
   const e = easeInOut(progress);
   const start = v(def.startPos);
   const end = v(def.endPos);
@@ -65,6 +65,26 @@ export function computeCameraPose(def: CameraDef, progress: number, follow?: Fol
           look.z + Math.cos(angle) * radius,
         ),
         lookAt: look,
+      };
+    }
+
+    case 'crane_up':
+    case 'crane_down': {
+      // grua: sobe (ou desce) e o olhar acompanha um pouco, revelando o cenário
+      const lift = def.movement === 'crane_up' ? 0.9 : -0.6;
+      return { position: start.lerp(end, e), lookAt: look.add(new THREE.Vector3(0, lift * e, 0)) };
+    }
+
+    case 'handheld': {
+      // câmera na mão: tremor suave feito de senos, igual a cada vez que t se repete
+      const shake = new THREE.Vector3(
+        0.07 * Math.sin(t * 1.9) + 0.03 * Math.sin(t * 5.3),
+        0.05 * Math.sin(t * 2.3 + 1) + 0.02 * Math.sin(t * 6.1),
+        0.04 * Math.sin(t * 1.4 + 2),
+      );
+      return {
+        position: start.lerp(end, e).add(shake),
+        lookAt: look.add(shake.clone().multiplyScalar(0.4)),
       };
     }
 

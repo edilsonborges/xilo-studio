@@ -79,6 +79,15 @@ No passo 3 você escolhe o estilo. Os visuais 3D ficam em `src/engine/styles.ts`
 
 ![Os 30 visuais 3D, numa cena de vila ao entardecer](docs/visuais-3d.jpg)
 
+O conteúdo das cenas 3D fica no catálogo `src/scenarios.ts` (25 cenários com
+paleta, objetos típicos, clima, hora e palavras do roteiro), em
+`src/engine/scenery.ts` (objetos), `src/engine/vehicles.ts` (veículos e
+animais) e `src/engine/character.ts` (tipos de personagem e 15 ações).
+
+| Cenários | Ações | Veículos | Clima e hora |
+|---|---|---|---|
+| ![Cenários](docs/cenarios-3d.jpg) | ![Ações](docs/acoes-3d.jpg) | ![Veículos](docs/veiculos-3d.jpg) | ![Clima](docs/clima-3d.jpg) |
+
 A "IA do Xilo" roda no servidor, pelo [opencode-gateway](https://github.com/edilsonborges/opencode-gateway)
 da mesma máquina: texto com `gpt-6-luna` e imagens com `gpt-image-2`, pela
 assinatura do ChatGPT. Ninguém precisa de chave no navegador. Configure
