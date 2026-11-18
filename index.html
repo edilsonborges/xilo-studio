@@ -85,6 +85,14 @@
                 <option value="1.2">Mais rápida</option>
               </select>
             </div>
+            <div class="studio-options" id="studio-options" hidden>
+              <p class="hint" id="studio-note">Neste servidor o VoiceStudio roda sem placa de vídeo e demora. Escolha a qualidade:</p>
+              <div class="studio-qualities" id="studio-qualities" role="radiogroup" aria-label="Qualidade da voz do VoiceStudio"></div>
+            </div>
+            <div class="narration-progress" id="narration-progress" hidden aria-live="polite">
+              <div class="progress"><div id="narration-bar"></div></div>
+              <p class="hint"><span id="narration-eta"></span> <button class="link" id="narration-cancel" type="button">Cancelar</button></p>
+            </div>
             <div class="narration-playback" id="narration-playback" hidden>
               <div class="playback-heading">
                 <button id="version-button" class="playback-version" type="button" aria-haspopup="dialog" title="Escolher narração para o vídeo" disabled><strong id="listen-title"></strong></button>

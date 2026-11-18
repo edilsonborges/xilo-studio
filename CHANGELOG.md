@@ -4,6 +4,25 @@ Todas as mudanças relevantes do Xilo Studio ficam registradas aqui. O formato
 segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões
 seguem o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.8.2] - 2026-11-18
+
+### Adicionado
+
+- O VoiceStudio passa a funcionar também em servidor sem placa de vídeo, onde
+  ele é bem mais lento. Nesse caso aparece uma voz "VoiceStudio · OmniVoice"
+  com duas qualidades: Rápida e Máxima. A tela mostra a espera prevista para
+  o seu roteiro antes de você começar.
+- Enquanto essa narração é gerada, uma barra mostra quanto do áudio já está
+  pronto e quanto tempo falta, com a opção de cancelar.
+
+### Alterado
+
+- Onde o VoiceStudio é lento, a voz inicial é a do Edge, que responde em
+  segundos. O VoiceStudio fica como opção para quem pode esperar.
+- O VoiceStudio lento gera uma narração por vez. Se ele estiver ocupado, o
+  Xilo avisa em quanto tempo fica livre. Cancelar libera você na hora, mas o
+  VoiceStudio só fica livre quando termina o que já começou.
+
 ## [0.8.1] - 2026-11-18
 
 ### Corrigido

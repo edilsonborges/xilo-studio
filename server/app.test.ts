@@ -8,6 +8,7 @@ import { createApp } from './app.js';
 import type { ServerConfig } from './config.js';
 import type { Email, Mailer } from './mailer.js';
 import { createGateway, type Gateway } from './ai.js';
+import type { NarrationRequest } from './narration.js';
 import type { Narrator } from './narration.js';
 import { LOGIN_EMAIL_LIMIT, NARRATION_LIMIT } from './store.js';
 
@@ -456,6 +457,91 @@ test('sem VoiceStudio no servidor: as vozes dele somem e a voz inicial é a do E
   assert.deepEqual(used, ['pt-BR-AntonioNeural']);
   // pedir uma voz do VoiceStudio é recusado sem criar tarefa
   const refused = await admin.post('/api/narration').set('Origin', ORIGIN).send({ text: 'Olá.', voice: 'voicestudio-pt-br', rate: 1 }).expect(503);
-  assert.match(refused.body.error, /Edge TTS/);
+  assert.match(refused.body.error, /não está disponível/);
   assert.equal(used.length, 1);
+});
+
+/** App com o VoiceStudio em modo OmniVoice (sem Kokoro), como no servidor de produção. */
+function omniSetup(t: TestContext, narrator: (request: NarrationRequest) => Promise<{ audio: Buffer; words: [] }>) {
+  const dir = mkdtempSync(join(tmpdir(), 'xilo-test-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeDist(join(dir, 'dist'));
+  const sent: Email[] = [];
+  const pending: Promise<void>[] = [];
+  const app = createApp({
+    config: {
+      databasePath: join(dir, 'x.sqlite'), appOrigin: ORIGIN, port: 0, nodeEnv: 'production',
+      resendFrom: 'x <x@example.com>', distPath: join(dir, 'dist'), adminEmails: [ADMIN], trustCloudflareIp: false,
+    },
+    mailer: async (message) => { sent.push(message); },
+    onBackgroundTask: (task) => pending.push(task),
+    narrator,
+    studioAvailable: async () => ({ up: true, kokoro: false }),
+  });
+  t.after(() => app.locals.close());
+  return { app, login: () => adminAgent(app, sent, () => Promise.all(pending.splice(0))) };
+}
+
+test('VoiceStudio só com OmniVoice: uma voz depois das do Edge, duas qualidades e Edge como inicial', async (t) => {
+  const seen: NarrationRequest[] = [];
+  const { login } = omniSetup(t, async (request) => { seen.push(request); return { audio: Buffer.from('x'), words: [] }; });
+  const admin = await login();
+  const voices = await admin.get('/api/narration/voices').expect(200);
+  assert.deepEqual(voices.body.voices.map((v: { id: string }) => v.id), ['pt-BR-AntonioNeural', 'pt-BR-FranciscaNeural', 'pt-BR-ThalitaMultilingualNeural', 'voicestudio-omnivoice']);
+  assert.equal(voices.body.defaultVoice, 'pt-BR-AntonioNeural');
+  assert.deepEqual(voices.body.studio.qualities.map((q: { id: string; ratio: number }) => [q.id, q.ratio]), [['fast', 11], ['best', 25]]);
+
+  // sem voz no pedido: Edge, na hora
+  await admin.post('/api/narration').set('Origin', ORIGIN).send({ text: 'Olá.', rate: 1 }).expect(200);
+  assert.equal(seen[0].voice, 'pt-BR-AntonioNeural');
+  // os estilos do Kokoro não existem neste backend
+  await admin.post('/api/narration').set('Origin', ORIGIN).send({ text: 'Olá.', voice: 'voicestudio-pt-br', rate: 1 }).expect(503);
+  // OmniVoice: tarefa em segundo plano, qualidade rápida por padrão e máxima a pedido
+  for (const [quality, expected] of [[undefined, 'fast'], ['best', 'best']] as const) {
+    const started = await admin.post('/api/narration').set('Origin', ORIGIN).send({ text: 'Olá, sertão.', voice: 'voicestudio-omnivoice', rate: 1, ...(quality ? { quality } : {}) }).expect(202);
+    const done = await admin.get(`/api/narration/jobs/${started.body.jobId}`).expect(200);
+    assert.equal(done.body.mimeType ?? 'audio/wav', 'audio/wav');
+    assert.equal(seen.at(-1)!.quality, expected);
+  }
+  await admin.post('/api/narration').set('Origin', ORIGIN).send({ text: 'Olá.', voice: 'voicestudio-omnivoice', rate: 1, quality: 'ultra' }).expect(400);
+});
+
+test('OmniVoice: andamento real, uma narração por vez, e cancelar só libera a vaga quando o backend termina', async (t) => {
+  const releases: Array<() => void> = [];
+  let report: ((seconds: number) => void) | undefined;
+  const { login } = omniSetup(t, (request) => new Promise((resolve) => {
+    report = request.onProgress;
+    releases.push(() => resolve({ audio: Buffer.from('x'), words: [] }));
+  }));
+  const admin = await login();
+  const text = Array.from({ length: 46 }, () => 'palavra').join(' '); // 46 palavras = 20 s de áudio
+  const started = await admin.post('/api/narration').set('Origin', ORIGIN).send({ text, voice: 'voicestudio-omnivoice', rate: 1 }).expect(202);
+  const id = started.body.jobId;
+
+  const waiting = await admin.get(`/api/narration/jobs/${id}`).expect(202);
+  assert.equal(waiting.body.progress.done, 0);
+  assert.ok(Math.abs(waiting.body.progress.total - 20) < 0.01);
+  report!(7.5);
+  assert.equal((await admin.get(`/api/narration/jobs/${id}`).expect(202)).body.progress.done, 7.5);
+
+  // enquanto uma roda, outra é recusada com o tempo previsto
+  const busy = await admin.post('/api/narration').set('Origin', ORIGIN).send({ text: 'Outra.', voice: 'voicestudio-omnivoice', rate: 1 }).expect(429);
+  assert.match(busy.body.error, /uma por vez.*livre em cerca de/);
+  assert.ok(Number(busy.headers['retry-after']) >= 5);
+
+  // cancelar: a pessoa é liberada, mas o VoiceStudio segue ocupado até terminar
+  const cancelled = await admin.delete(`/api/narration/jobs/${id}`).set('Origin', ORIGIN).send({}).expect(200);
+  assert.ok(cancelled.body.busyFor >= 5);
+  await admin.get(`/api/narration/jobs/${id}`).expect(410);
+  const still = await admin.post('/api/narration').set('Origin', ORIGIN).send({ text: 'Outra.', voice: 'voicestudio-omnivoice', rate: 1 }).expect(429);
+  assert.match(still.body.error, /terminando uma narração cancelada/);
+
+  // o backend termina: o áudio cancelado é descartado e a vaga volta
+  releases[0]();
+  await new Promise((resolve) => setImmediate(resolve));
+  await admin.get(`/api/narration/jobs/${id}`).expect(410);
+  const again = await admin.post('/api/narration').set('Origin', ORIGIN).send({ text: 'Outra.', voice: 'voicestudio-omnivoice', rate: 1 }).expect(202);
+  releases[1]();
+  await new Promise((resolve) => setImmediate(resolve));
+  await admin.get(`/api/narration/jobs/${again.body.jobId}`).expect(200);
 });

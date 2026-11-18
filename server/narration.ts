@@ -2,11 +2,12 @@
 // Roda no servidor porque o serviço só aceita a identificação do navegador Edge;
 // a página não consegue chamá-lo direto. É um serviço não oficial e pode mudar.
 
-import { STUDIO_STYLES } from './voicestudio.js';
+import { OMNIVOICE_ID, STUDIO_STYLES, type StudioQuality } from './voicestudio.js';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 
 export const VOICES = [
   ...STUDIO_STYLES.map(({ id, label }) => ({ id, label })),
+  { id: OMNIVOICE_ID, label: 'VoiceStudio · OmniVoice' },
   { id: 'pt-BR-AntonioNeural', label: 'Antonio (masculina)' },
   { id: 'pt-BR-FranciscaNeural', label: 'Francisca (feminina)' },
   { id: 'pt-BR-ThalitaMultilingualNeural', label: 'Thalita (feminina, multilíngue)' },
@@ -19,6 +20,12 @@ export interface NarrationRequest {
   voice: VoiceId;
   /** 1 é o normal; 0.9 mais lento, 1.15 mais rápido */
   rate: number;
+  /** só no OmniVoice: rápida (8 passos) ou máxima (16) */
+  quality?: StudioQuality;
+  /** segundos de áudio já prontos, enquanto a síntese roda */
+  onProgress?: (audioSeconds: number) => void;
+  /** cancela a síntese */
+  signal?: AbortSignal;
 }
 
 export interface SpokenWord {

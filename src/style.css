@@ -1062,3 +1062,70 @@ dialog.style-dialog {
   #caption-button { gap: 8px; }
   #caption-button .style-change { padding: 4px 7px; }
 }
+
+/* VoiceStudio lento: qualidade e andamento da narração */
+
+.studio-options {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.studio-options .hint,
+.narration-progress .hint {
+  margin: 0;
+}
+
+.studio-qualities {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.studio-quality {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.studio-quality small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.studio-quality[aria-checked='true'] {
+  border-color: var(--accent);
+  box-shadow: 3px 3px 0 var(--accent);
+}
+
+.studio-quality:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.narration-progress {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.narration-progress .progress {
+  margin-top: 0;
+}
+
+.narration-progress .progress div {
+  transition: width 1.2s linear;
+}
+
+@media (max-width: 640px) {
+  .studio-qualities {
+    grid-template-columns: 1fr;
+  }
+}
