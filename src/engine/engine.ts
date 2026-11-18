@@ -6,8 +6,9 @@
 // avançar ou voltar na timeline mostra sempre o mesmo frame para o mesmo t.
 
 import * as THREE from 'three';
-import type { SceneDef, SceneGraphJSON } from '../types';
+import { ANIMAL_TYPES, VEHICLE_TYPES, type SceneDef, type SceneGraphJSON } from '../types';
 import { clamp, hashString } from '../util';
+import { constrainTravel, stopAtContacts, type MotionBody } from './collision';
 import { computeCameraPose } from './camera';
 import { UPPER_BODY, animateCharacter, createCharacter, travelProgress, type CharacterRig, type Cue } from './character';
 import { createEnvironment, type EnvironmentObject } from './environment';
@@ -28,6 +29,7 @@ interface BuiltCharacter {
   end: THREE.Vector3;
   moves: boolean;
   facing: number;
+  travelLimit: number;
   restHeight: number;
   animation: SceneDef['characters'][number]['animation'];
   id: string;
@@ -42,7 +44,7 @@ interface BuiltProp {
   end: THREE.Vector3;
   moves: boolean;
   distance: number;
-  baseYaw: number;
+  travelLimit: number;
 }
 
 interface BuiltScene {
@@ -52,6 +54,12 @@ interface BuiltScene {
   characters: BuiltCharacter[];
   props: BuiltProp[];
 }
+
+const SOLID_PROPS: ReadonlySet<string> = new Set([
+  ...VEHICLE_TYPES, ...ANIMAL_TYPES, 'building', 'rustic_house', 'church', 'barn', 'market_stall',
+  'bandstand', 'fence', 'tree', 'dry_tree', 'palm_tree', 'rock', 'pole', 'lamp_post', 'bench',
+  'well', 'bed', 'table', 'chair', 'sofa', 'desk', 'stove', 'pew', 'altar', 'barrel',
+]);
 
 const SEAT_SNAP_DISTANCE = 1.6;
 const tmp = new THREE.Vector3();
@@ -155,8 +163,9 @@ export class SceneEngine {
     // veículos e animais andam em velocidade constante, de position a targetPosition
     for (const p of built.props) {
       const group = p.object.group;
-      group.position.lerpVectors(p.start, p.end, p.moves ? progress : 0);
-      p.object.update?.(t, { moving: p.moves && progress < 1, distance: p.moves ? p.distance * progress : 0 });
+      const travelled = Math.min(progress, p.travelLimit);
+      group.position.lerpVectors(p.start, p.end, p.moves ? travelled : 0);
+      p.object.update?.(t, { moving: p.moves && progress < p.travelLimit, distance: p.moves ? p.distance * travelled / group.scale.z : 0 });
     }
 
     let follow: { start: THREE.Vector3; current: THREE.Vector3 } | undefined;
@@ -173,19 +182,20 @@ export class SceneEngine {
         root.position.copy(group.position).add(tmp);
         root.rotation.y = group.rotation.y;
         seatHeight = (sy * group.scale.y) / root.scale.y;
-        moving = c.seatedOn.moves && progress < 1;
+        moving = c.seatedOn.moves && progress < c.seatedOn.travelLimit;
       } else {
         // deslocamento em velocidade constante, só enquanto a ação em curso é de andar
         const travel = travelProgress(c.animation, c.cues, t - def.startTime, span);
-        root.position.lerpVectors(c.start, c.end, c.moves ? travel.progress : 0);
+        root.position.lerpVectors(c.start, c.end, c.moves ? Math.min(c.travelLimit, travel.progress) : 0);
         root.rotation.y = c.facing;
-        walkingNow = c.moves && travel.travelling;
+        walkingNow = c.moves && travel.travelling && travel.progress < c.travelLimit;
       }
       animateCharacter(c.rig, c.animation, t, {
         restHeight: c.restHeight,
         seatHeight,
         moving,
         travelling: walkingNow,
+        strideDistance: c.moves ? root.position.distanceTo(c.start) / root.scale.y : undefined,
         elapsed: t - def.startTime,
       }, c.cues);
       if (def.camera.movement === 'follow_character' && def.camera.target === c.id) {
@@ -227,7 +237,7 @@ export class SceneEngine {
       const moves = start.distanceTo(end) > 0.05;
       // quem anda olha para onde vai
       if (moves) object.group.rotation.y = Math.atan2(end.x - start.x, end.z - start.z);
-      return { object, start, end, moves, distance: start.distanceTo(end), baseYaw: object.group.rotation.y };
+      return { object, start, end, moves, distance: start.distanceTo(end), travelLimit: 1 };
     });
     const propById = new Map<string, BuiltProp>();
     def.props.forEach((p, i) => { if (p.id) propById.set(p.id, props[i]); });
@@ -239,7 +249,7 @@ export class SceneEngine {
       scene.add(rig.root);
       const start = new THREE.Vector3(...c.position);
       const end = c.targetPosition ? new THREE.Vector3(...c.targetPosition) : start.clone();
-      const built: BuiltCharacter = { rig, start, end, moves: start.distanceTo(end) > 0.05, facing: 0, restHeight: 0, animation: c.animation, id: c.id, cues: c.actions };
+      const built: BuiltCharacter = { rig, start, end, moves: start.distanceTo(end) > 0.05, facing: 0, travelLimit: 1, restHeight: 0, animation: c.animation, id: c.id, cues: c.actions };
 
       const mount = c.mount ? propById.get(c.mount) : undefined;
       if (mount?.object.seat) {
@@ -293,6 +303,37 @@ export class SceneEngine {
         c.facing = clamp(toOther, -Math.PI / 2, Math.PI / 2) * turn;
       }
     }
+
+    const walls = [...environment.obstacles];
+    const actors: MotionBody[] = [];
+    const span = Math.max(0.001, def.endTime - def.startTime);
+    for (const [i, p] of props.entries()) {
+      if (!p.moves && !SOLID_PROPS.has(def.props[i].type)) continue;
+      const bounds = new THREE.Box3().setFromObject(p.object.group);
+      if (p.moves) actors.push({ path: p, bounds, progress: t => t, cues: [] });
+      else walls.push(bounds);
+    }
+    for (const c of characters) {
+      if (c.seatedOn || c.animation === 'sleep') continue;
+      c.rig.root.position.copy(c.start);
+      c.rig.root.rotation.y = c.facing;
+      const bounds = new THREE.Box3().setFromObject(c.rig.root);
+      if (c.moves) actors.push({
+        path: c, bounds,
+        progress: t => travelProgress(c.animation, c.cues, t * span, span).progress,
+        cues: c.cues?.map(cue => cue.at / span) ?? [],
+      });
+      else walls.push(bounds);
+    }
+    const occupied: THREE.Box3[] = [];
+    for (const actor of actors) {
+      const { path, bounds } = actor;
+      const original = path.start.clone();
+      path.travelLimit = constrainTravel(path.start, path.end, bounds, walls, occupied);
+      bounds.translate(path.start.clone().sub(original));
+      occupied.push(bounds);
+    }
+    stopAtContacts(actors);
 
     return { def, scene, environment, characters, props };
   }

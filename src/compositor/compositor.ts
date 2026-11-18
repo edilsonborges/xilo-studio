@@ -11,6 +11,7 @@ export interface FrameSource {
   sceneAt(t: number): { locationTitle?: string; startTime: number; endTime: number } | null;
 }
 import type { Timeline, WordTiming } from '../types';
+import { paintCaption, type CaptionStyle } from './captions';
 import { clamp } from '../util';
 
 interface CaptionGroup {
@@ -20,12 +21,8 @@ interface CaptionGroup {
   end: number;
 }
 
-const SANS = "'Helvetica Neue', 'Segoe UI', Arial, sans-serif";
 const SERIF = "Georgia, 'Times New Roman', 'Noto Serif', serif";
 
-const CAPTION_FONT_SIZE = 62;
-const CAPTION_LINE_HEIGHT = 86;
-const CAPTION_MAX_WIDTH = 860;
 const CAPTION_CENTER_Y = 1430;
 const CAPTION_MAX_WORDS = 5;
 const CAPTION_MAX_CHARS = 26;
@@ -62,17 +59,6 @@ export function buildCaptionGroups(timeline: Timeline): CaptionGroup[] {
   return groups;
 }
 
-function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
-  const radius = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + radius, y);
-  ctx.arcTo(x + w, y, x + w, y + h, radius);
-  ctx.arcTo(x + w, y + h, x, y + h, radius);
-  ctx.arcTo(x, y + h, x, y, radius);
-  ctx.arcTo(x, y, x + w, y, radius);
-  ctx.closePath();
-}
-
 export class Compositor {
   readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
@@ -80,6 +66,7 @@ export class Compositor {
   private groups: CaptionGroup[] = [];
   accent = '#d8432b';
   showCaptions = true;
+  captionStyle: CaptionStyle = 'pill';
 
   constructor(private engine: FrameSource, canvas?: HTMLCanvasElement) {
     this.canvas = canvas ?? document.createElement('canvas');
@@ -189,69 +176,11 @@ export class Compositor {
     for (let i = 0; i < words.length; i++) if (words[i].start <= t) active = i;
 
     ctx.save();
-    ctx.font = `800 ${CAPTION_FONT_SIZE}px ${SANS}`;
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'left';
-    const space = ctx.measureText(' ').width;
-    const widths = words.map((w) => ctx.measureText(w.text).width);
-
-    // quebra em linhas
-    const lines: Array<{ from: number; to: number; width: number }> = [];
-    let from = 0;
-    let lineWidth = 0;
-    for (let i = 0; i < words.length; i++) {
-      const add = (i > from ? space : 0) + widths[i];
-      if (i > from && lineWidth + add > CAPTION_MAX_WIDTH) {
-        lines.push({ from, to: i - 1, width: lineWidth });
-        from = i;
-        lineWidth = widths[i];
-      } else lineWidth += add;
-    }
-    lines.push({ from, to: words.length - 1, width: lineWidth });
-
-    const padX = 46;
-    const padY = 26;
-    const boxW = Math.max(...lines.map((l) => l.width)) + padX * 2;
-    const boxH = lines.length * CAPTION_LINE_HEIGHT + padY * 2;
-    const cx = FRAME_WIDTH / 2;
-    const cy = CAPTION_CENTER_Y;
-
-    // entrada rápida com leve crescimento: depende só de t
     const appear = easeOut((t - group.start) / 0.12);
     ctx.globalAlpha = appear;
-    ctx.translate(cx, cy);
-    ctx.scale(0.92 + 0.08 * appear, 0.92 + 0.08 * appear);
-    ctx.translate(-cx, -cy);
-
-    const bx = cx - boxW / 2;
-    const by = cy - boxH / 2;
-    // sombra dura deslocada e traço preto: a pílula também é "xilogravura"
-    ctx.fillStyle = '#140e0a';
-    roundRect(ctx, bx + 8, by + 10, boxW, boxH, 48);
-    ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    roundRect(ctx, bx, by, boxW, boxH, 48);
-    ctx.fill();
-    ctx.lineWidth = 6;
-    ctx.strokeStyle = '#140e0a';
-    ctx.stroke();
-
-    lines.forEach((line, row) => {
-      let x = cx - line.width / 2;
-      const y = by + padY + CAPTION_LINE_HEIGHT * (row + 0.5) + 2;
-      for (let i = line.from; i <= line.to; i++) {
-        if (i === active) {
-          ctx.fillStyle = this.accent;
-          roundRect(ctx, x - 12, y - CAPTION_FONT_SIZE * 0.6, widths[i] + 24, CAPTION_FONT_SIZE * 1.2, 18);
-          ctx.fill();
-          ctx.fillStyle = '#ffffff';
-        } else {
-          ctx.fillStyle = '#1b1512';
-        }
-        ctx.fillText(words[i].text, x, y);
-        x += widths[i] + space;
-      }
-    });
+    ctx.translate(FRAME_WIDTH / 2, CAPTION_CENTER_Y);
+    if (this.captionStyle === 'pill') ctx.scale(0.92 + 0.08 * appear, 0.92 + 0.08 * appear);
+    paintCaption(ctx, this.captionStyle, words.map(w => w.text), active, this.accent);
     ctx.restore();
   }
 }

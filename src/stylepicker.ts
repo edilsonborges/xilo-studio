@@ -27,66 +27,110 @@ function picture(value: string, label: string): HTMLElement {
   return img;
 }
 
-export function initStylePicker(select: HTMLSelectElement, button: HTMLButtonElement): void {
+interface PickerOptions {
+  title: string;
+  preview?: (option: HTMLOptionElement) => HTMLElement;
+}
+
+export function bindPickerDialog(select: HTMLSelectElement, button: HTMLButtonElement, options: PickerOptions): void {
+  const preview = options.preview ?? (option => picture(option.value, option.text));
   const dialog = document.createElement('dialog');
   dialog.className = 'style-dialog';
+  dialog.id = `${select.id}-dialog`;
+  dialog.setAttribute('aria-labelledby', `${dialog.id}-title`);
+  button.setAttribute('aria-controls', dialog.id);
   const box = document.createElement('div');
   box.className = 'whats-new';
+  const head = document.createElement('div');
+  head.className = 'picker-head';
   const title = document.createElement('h2');
-  title.textContent = 'Estilo do vídeo';
-  box.append(title);
-  const cards = new Map<string, HTMLButtonElement>();
+  title.id = `${dialog.id}-title`;
+  title.textContent = options.title;
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'btn';
+  close.textContent = 'Fechar';
+  close.addEventListener('click', () => dialog.close());
+  head.append(title, close);
+  dialog.append(box);
+  document.body.append(dialog);
 
-  for (const group of select.querySelectorAll('optgroup')) {
-    const heading = document.createElement('h3');
-    heading.className = 'style-group';
-    heading.textContent = group.label;
-    const grid = document.createElement('div');
-    grid.className = 'style-grid';
-    for (const option of group.querySelectorAll('option')) {
+  button.addEventListener('click', () => {
+    box.replaceChildren(head);
+    let group: Element | null = null;
+    let grid = document.createElement('div');
+    let selected: HTMLButtonElement | undefined;
+    for (const option of select.options) {
+      if (option.parentElement !== group) {
+        group = option.parentElement;
+        if (group instanceof HTMLOptGroupElement) {
+          const heading = document.createElement('h3');
+          heading.className = 'style-group';
+          heading.textContent = group.label;
+          box.append(heading);
+        }
+        grid = document.createElement('div');
+        grid.className = options.preview ? 'style-grid picker-grid-wide' : 'style-grid';
+        box.append(grid);
+      }
       const card = document.createElement('button');
       card.type = 'button';
       card.className = 'style-card';
-      const name = document.createElement('span');
-      name.textContent = option.textContent ?? option.value;
-      card.append(picture(option.value, name.textContent), name);
+      card.disabled = option.disabled;
+      card.setAttribute('aria-pressed', String(option.selected));
+      if (option.selected) {
+        selected = card;
+        card.classList.add('selected');
+      }
+      const name = document.createElement('strong');
+      name.textContent = option.dataset.title || option.text;
+      card.append(preview(option), name);
+      if (option.dataset.detail) {
+        const detail = document.createElement('small');
+        detail.textContent = option.dataset.detail;
+        card.append(detail);
+      }
       card.addEventListener('click', () => {
-        select.value = option.value;
-        select.dispatchEvent(new Event('change'));
+        if (!select.disabled) {
+          select.value = option.value;
+          select.dispatchEvent(new Event('change'));
+        }
         dialog.close();
       });
-      cards.set(option.value, card);
       grid.append(card);
     }
-    box.append(heading, grid);
-  }
-  dialog.append(box);
-  dialog.addEventListener('click', (event) => {
-    if (event.target === dialog) dialog.close();
+    dialog.showModal();
+    selected?.focus({ preventScroll: true });
+    selected?.scrollIntoView({ block: 'nearest' });
   });
-  document.body.append(dialog);
+  dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+}
 
+export function initStylePicker(select: HTMLSelectElement, button: HTMLButtonElement, options: PickerOptions = { title: 'Estilo do vídeo' }): () => void {
+  const preview = options.preview ?? (option => picture(option.value, option.text));
+  bindPickerDialog(select, button, options);
   const refresh = (): void => {
     const option = select.selectedOptions[0];
-    if (!option) return;
-    const label = option.textContent ?? option.value;
+    button.disabled = select.disabled || !option;
+    if (!option) {
+      button.textContent = options.title;
+      return;
+    }
     const text = document.createElement('span');
     text.className = 'style-current';
     const strong = document.createElement('strong');
-    strong.textContent = label;
-    const group = document.createElement('small');
-    group.textContent = (option.parentElement as HTMLOptGroupElement | null)?.label ?? '';
-    text.append(strong, group);
+    strong.textContent = option.dataset.title || option.text;
+    const detail = document.createElement('small');
+    detail.textContent = option.dataset.detail || (option.parentElement instanceof HTMLOptGroupElement ? option.parentElement.label : options.title);
+    text.append(strong, detail);
     const change = document.createElement('span');
     change.className = 'style-change';
     change.textContent = 'Trocar';
-    button.replaceChildren(picture(option.value, label), text, change);
-    for (const [value, card] of cards) card.classList.toggle('selected', value === option.value);
+    button.replaceChildren(preview(option), text, change);
+    button.setAttribute('aria-label', `${options.title}: ${option.text}. Trocar`);
   };
+
   select.addEventListener('change', refresh);
-  button.addEventListener('click', () => {
-    dialog.showModal();
-    cards.get(select.value)?.scrollIntoView({ block: 'center' });
-  });
   refresh();
+  return refresh;
 }

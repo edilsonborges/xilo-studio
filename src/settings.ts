@@ -1,5 +1,7 @@
 // Configurações do usuário. As chaves de API vivem só no localStorage.
 
+import { captionStyle, type CaptionStyle } from './compositor/captions';
+
 export type LlmProvider = 'none' | 'xilo' | 'openai' | 'gemini' | 'anthropic';
 import { RENDER_STYLES } from './engine/styles';
 
@@ -24,9 +26,11 @@ export interface Settings {
   geminiModel: string;
   anthropicModel: string;
   captionAccent: string;
+  captionStyle: CaptionStyle;
   /** voz e velocidade da narração gerada pelo Edge TTS */
   ttsVoice: string;
   ttsRate: string;
+  narrationReplacement: 'ask' | 'replace';
   /** ilustrado por IA (um dos estilos) ou o 3D de cordel */
   videoStyle: VideoStyle;
   /** duração desejada do vídeo, em segundos (5 a 180) */
@@ -49,8 +53,10 @@ export const DEFAULT_SETTINGS: Settings = {
   geminiModel: env.VITE_GEMINI_MODEL || 'gemini-2.5-flash',
   anthropicModel: env.VITE_ANTHROPIC_MODEL || 'claude-opus-5-5',
   captionAccent: '#d8432b',
-  ttsVoice: 'pt-BR-AntonioNeural',
+  captionStyle: 'pill',
+  ttsVoice: 'voicestudio-pt-br',
   ttsRate: '1',
+  narrationReplacement: 'ask',
   videoStyle: 'xilogravura',
   videoDuration: '30',
 };
@@ -77,6 +83,7 @@ export function loadSettings(): Settings {
     // o antigo "3D de cordel" virou o visual "Xilogravura clássica"
     if ((merged.videoStyle as string) === '3d') merged.videoStyle = '3d-xilogravura';
     if (!VIDEO_STYLES.includes(merged.videoStyle)) merged.videoStyle = 'xilogravura';
+    merged.captionStyle = captionStyle(merged.captionStyle);
     return merged;
   } catch {
     return { ...DEFAULT_SETTINGS };

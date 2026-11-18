@@ -13,7 +13,7 @@ navegador (Vite + TypeScript, sem framework)
         ▼           ▼                          ▼
 servidor Node (Express + SQLite), porta 47653
   /api/auth, /api/admin   contas, sessões, convites (Resend), registro de atividade
-  /api/narration          voz pelo Edge TTS, com o tempo de cada palavra
+  /api/narration          VoiceStudio por tarefa ou Edge TTS com tempos por palavra
   /api/ai                 texto e imagens pelo opencode-gateway
   páginas e /assets       só para quem tem sessão (menos a tela de login)
 ```
@@ -22,11 +22,8 @@ servidor Node (Express + SQLite), porta 47653
 
 1. **Roteiro** (`src/writer.ts`): texto do usuário, um exemplo escrito pela IA ou
    uma versão melhorada. O slider de duração orienta o tamanho do texto.
-2. **Narração** (`src/audio/edge.ts` → `server/narration.ts`): o Edge TTS devolve
-   o `.mp3` e o instante de cada palavra. Também dá para enviar um áudio próprio.
-3. **Tempos** (`src/audio/`): com a voz gerada, valem os tempos do Edge TTS. Com
-   áudio enviado, o alinhador local estima os tempos, ou o Whisper os mede se a
-   pessoa tiver chave da OpenAI.
+2. O cliente de **narração** em `src/audio/narration.ts` pede voz ao servidor. VoiceStudio devolve um WAV por tarefa assíncrona. Edge TTS devolve MP3 com tempos por palavra. Também é possível enviar áudio próprio.
+3. O módulo de **tempos** em `src/audio/` usa as marcações da voz Edge quando disponíveis. Com VoiceStudio ou áudio enviado, usa o alinhador local ou o Whisper configurado pela pessoa.
 4. **Fatias de cena** (`src/director/splitter.ts`): corta a narração em cenas de
    4 a 8 s, de preferência em fim de frase. Cada fatia leva as suas palavras com
    tempo.

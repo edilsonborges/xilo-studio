@@ -5,7 +5,8 @@ import { z } from 'zod';
 import { loadConfig, validateConfig, type ServerConfig } from './config.js';
 import { createResendMailer, inviteEmail, resetEmail, type Mailer } from './mailer.js';
 import { createGateway, type AiOutcome, type Gateway } from './ai.js';
-import { VOICES, edgeNarrator, type Narrator } from './narration.js';
+import { createVoiceStudio, studioStyle, VOICESTUDIO_ID } from './voicestudio.js';
+import { VOICES, edgeNarrator, type Narration, type Narrator } from './narration.js';
 import { validPasswordInput } from './password.js';
 import { type EventStatus, AuthStore, AI_IMAGE_LIMIT, AI_TEXT_LIMIT, NARRATION_LIMIT, SESSION_TTL, invalidCredentials, type TokenPurpose, type User } from './store.js';
 
@@ -56,7 +57,7 @@ const aiImageSchema = z.object({ prompt: z.string().trim().min(1).max(4_000) }).
 const AI_JOB_TTL = 15 * 60_000;
 const narrationSchema = z.object({
   text: z.string().trim().min(1).max(MAX_NARRATION_CHARS),
-  voice: z.enum(VOICES.map((voice) => voice.id) as [string, ...string[]]),
+  voice: z.enum(VOICES.map((voice) => voice.id) as [string, ...string[]]).default(VOICESTUDIO_ID),
   rate: z.number().min(0.5).max(2),
 }).strict();
 
@@ -288,9 +289,26 @@ export function createApp(options: AppOptions = {}): express.Express {
     res.json({ user: result.user });
   });
 
-  // ---- Narração com Edge TTS (qualquer pessoa logada) ----
+  // Narração para pessoas autenticadas.
 
-  const narrator = options.narrator ?? edgeNarrator;
+  const studio = createVoiceStudio(config.voiceStudio ?? { url: 'http://127.0.0.1:3900' });
+  type VoiceJob = { owner: string; result?: Narration; failed?: boolean };
+  const voiceJobs = new Map<string, VoiceJob>();
+  const voiceError = 'O VoiceStudio não respondeu. Tente novamente ou selecione uma voz do Edge TTS.';
+  app.get('/api/narration/jobs/:id', requireUser, (req, res) => {
+    const id = String(req.params.id);
+    const job = voiceJobs.get(id);
+    if (!job || job.owner !== res.locals.user.id) {
+      res.status(404).json({ error: 'Narração expirada.' });
+    } else if (job.failed) {
+      res.status(502).json({ error: voiceError });
+    } else if (job.result) {
+      const { audio, words, mimeType } = job.result;
+      res.json({ audio: audio.toString('base64'), words, mimeType });
+    } else {
+      res.status(202).json({ jobId: id });
+    }
+  });
 
   function requireUser(req: Request, res: Response, next: NextFunction): void {
     const user = sessionUser(req, res);
@@ -316,18 +334,39 @@ export function createApp(options: AppOptions = {}): express.Express {
       return;
     }
     const user = res.locals.user as User;
+    const isStudio = Boolean(studioStyle(parsed.data.voice));
+    if (isStudio && (voiceJobs.size >= 8 || [...voiceJobs.values()].some(job => job.owner === user.id && !job.result && !job.failed))) {
+      res.status(429).json({ error: 'Há narrações em andamento. Aguarde e tente novamente.' });
+      return;
+    }
     const blocked = store.reserve([{ key: `narration:${user.id}`, max: NARRATION_LIMIT }], now());
     if (blocked) {
       failure(res, blocked);
       return;
     }
-    try {
-      const { audio, words } = await narrator({
+    const narrator = options.narrator ?? (isStudio ? studio : edgeNarrator);
+    const generate = async () => {
+      const result = await narrator({
         text: parsed.data.text,
         voice: parsed.data.voice as (typeof VOICES)[number]['id'],
         rate: parsed.data.rate,
       });
       audit(user, 'narration', 'ok', { voz: parsed.data.voice, velocidade: parsed.data.rate, caracteres: parsed.data.text.length, roteiro: parsed.data.text.slice(0, 1_500) });
+      return result;
+    };
+    if (isStudio) {
+      const id = crypto.randomUUID();
+      const job: VoiceJob = { owner: user.id };
+      voiceJobs.set(id, job);
+      void generate().then(result => { job.result = result; }, () => {
+        job.failed = true;
+        audit(user, 'narration', 'fail', { voz: parsed.data.voice });
+      }).finally(() => setTimeout(() => voiceJobs.delete(id), 60_000).unref());
+      res.status(202).json({ jobId: id });
+      return;
+    }
+    try {
+      const { audio, words } = await generate();
       res.json({ audio: audio.toString('base64'), mimeType: 'audio/mpeg', words });
     } catch (error) {
       audit(user, 'narration', 'fail', { voz: parsed.data.voice, erro: error instanceof Error ? error.message.slice(0, 200) : 'erro desconhecido' });

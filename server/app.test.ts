@@ -408,3 +408,21 @@ test('atividade: só o admin vê; registra login, narração, vídeo e convite; 
   assert.ok(next.body.events[0].id < page.body.events[1].id);
   assert.equal(next.body.summary, undefined);
 });
+
+test('VoiceStudio é a primeira voz e entrega WAV por consulta autenticada', async t => {
+  const { app, sent, flush } = setup(t, null, async () => ({
+    audio: Buffer.from('wav-falso'), words: [], mimeType: 'audio/wav',
+  }));
+  const agent = await adminAgent(app, sent, flush);
+  const list = await agent.get('/api/narration/voices').expect(200);
+  const voice = list.body.voices[0].id;
+  assert.equal(voice, 'voicestudio-pt-br');
+  const result = await agent.post('/api/narration').set('Origin', ORIGIN)
+    .send({ text: 'Olá, Brasil!', rate: 1 }).expect(202);
+  const path = `/api/narration/jobs/${result.body.jobId}`;
+  await request(app).get(path).expect(401);
+  const done = await agent.get(path).expect(200);
+  assert.equal(done.body.mimeType, 'audio/wav');
+  assert.deepEqual(done.body.words, []);
+  assert.equal(Buffer.from(done.body.audio, 'base64').toString(), 'wav-falso');
+});

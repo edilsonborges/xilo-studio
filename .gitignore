@@ -11,6 +11,7 @@ ai-docs/
 
 # mídia de teste (não versionar áudio/vídeo grandes)
 *.mp3
+!src/assets/vozes/*.mp3
 *.wav
 *.m4a
 *.ogg

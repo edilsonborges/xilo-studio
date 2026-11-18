@@ -1,8 +1,10 @@
+import { voiceStudioConfig, type VoiceStudioConfig } from './voicestudio.js';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import type { GatewayConfig } from './ai.js';
 
 export interface ServerConfig {
+  voiceStudio?: VoiceStudioConfig;
   databasePath: string;
   appOrigin: string;
   port: number;
@@ -31,6 +33,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     throw new Error('PORT deve ser uma porta válida.');
   }
   const config: ServerConfig = {
+    voiceStudio: voiceStudioConfig(env),
     databasePath: resolve(env.DATABASE_PATH ?? './data/xilo.sqlite'),
     appOrigin: env.APP_ORIGIN ?? 'http://localhost:5173',
     port,

@@ -17,6 +17,7 @@ services:
       TRUST_CLOUDFLARE_IP: "true"
       # opencode-gateway nesta mesma máquina (texto e imagens pela assinatura);
       # a chave GATEWAY_API_KEY fica no .env
+      VOICESTUDIO_URL: ${VOICESTUDIO_URL:-http://host.docker.internal:3900}
       GATEWAY_URL: ${GATEWAY_URL:-http://host.docker.internal:4097}
     extra_hosts:
       - "host.docker.internal:host-gateway"

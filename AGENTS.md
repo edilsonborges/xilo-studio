@@ -16,6 +16,8 @@ Node (Express, SQLite) cuida de login, narração (Edge TTS) e IA
 - Cada entrega segue: issue → branch → testes → PR com CI verde → merge → tag →
   release → deploy com `./scripts/update.sh`. Não faça commit, push nem deploy
   sem pedido.
+- A cada nova entrega, incremente o número minor e zere o patch (por exemplo,
+  de `0.8.0` para `0.9.0`).
 - Toda versão sobe `VERSION`, `package.json`, `package-lock.json` e ganha uma
   entrada no `CHANGELOG.md`, escrita para quem usa o app. O changelog aparece no
   modal de novidades e na release pública.

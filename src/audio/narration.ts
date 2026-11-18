@@ -1,6 +1,3 @@
-// Narração gerada no servidor do Xilo com o Edge TTS. Volta o .mp3 e o tempo
-// exato de cada palavra, que substitui o alinhador e o Whisper.
-
 import { api } from '../auth/api';
 import type { WhisperWord } from './whisper';
 
@@ -19,14 +16,19 @@ export async function listVoices(): Promise<{ voices: Voice[]; maxChars: number 
 }
 
 export async function narrate(text: string, voice: string, rate: number): Promise<GeneratedNarration> {
-  const result = await api<{ audio: string; mimeType: string; words: WhisperWord[] }>(
+  type Result = { jobId: string } | { audio: string; mimeType: string; words: WhisperWord[] };
+  let result = await api<Result>(
     '/api/narration',
     'POST',
     { text, voice, rate },
   );
+  while ('jobId' in result) {
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    result = await api<Result>(`/api/narration/jobs/${encodeURIComponent(result.jobId)}`);
+  }
   const binary = atob(result.audio);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  const name = `narracao-${voice.replace(/^pt-BR-|Neural$/g, '').toLowerCase()}.mp3`;
+  const name = `narracao-${voice.replace(/^pt-BR-|Neural$/g, '').toLowerCase()}.${result.mimeType === 'audio/wav' ? 'wav' : 'mp3'}`;
   return { file: new File([bytes], name, { type: result.mimeType }), words: result.words };
 }
