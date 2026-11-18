@@ -147,6 +147,8 @@ const KINDS: Record<string, string> = {
   video_exported: 'Exportou vídeo',
   generation_failed: 'Falha ao gerar',
   export_failed: 'Falha ao exportar',
+  sample_story: 'Pediu exemplo de roteiro',
+  script_improved: 'Melhorou o texto',
   user_invited: 'Convidou pessoa',
   user_removed: 'Removeu pessoa',
 };

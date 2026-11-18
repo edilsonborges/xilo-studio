@@ -4,6 +4,21 @@ Todas as mudanças relevantes do Xilo Studio ficam registradas aqui. O formato
 segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões
 seguem o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.7.0] - 2026-11-18
+
+### Adicionado
+
+- O passo "Estilo do vídeo" agora mostra uma imagem de exemplo de cada um dos
+  34 estilos. O botão abre uma grade com todos, agrupados, e marca o escolhido.
+- "Usar exemplo" escreve uma história nova a cada clique, em temas que se
+  revezam: sertão, cidade com chuva, festa junina, pescaria, feira e outros.
+- "Melhorar texto": a IA do Xilo reescreve o seu roteiro, mais visual e no
+  tamanho certo. A sugestão aparece na própria caixa, abaixo de uma linha
+  tracejada, e você escolhe entre Aceitar e Descartar.
+- Duração do vídeo: um controle de 5 segundos a 3 minutos, com padrão de 30
+  segundos. O exemplo e o texto melhorado saem nesse tamanho, e o app mostra
+  quanto tempo de narração o seu texto dá.
+
 ## [0.6.0] - 2026-11-17
 
 ### Adicionado

@@ -40,7 +40,7 @@ const userIdSchema = z.string().uuid();
 const MAX_NARRATION_CHARS = 6_000;
 /** O que o navegador pode registrar: o que só ele sabe (vídeo gerado, exportado, falhas). */
 const clientEventSchema = z.object({
-  kind: z.enum(['video_generated', 'video_exported', 'generation_failed', 'export_failed']),
+  kind: z.enum(['video_generated', 'video_exported', 'generation_failed', 'export_failed', 'sample_story', 'script_improved']),
   status: z.enum(['ok', 'fail']),
   detail: z.record(z.string(), z.union([z.string().max(2_000), z.number(), z.boolean(), z.null()])).refine((d) => Object.keys(d).length <= 20),
 }).strict();

@@ -29,6 +29,8 @@ export interface Settings {
   ttsRate: string;
   /** ilustrado por IA (um dos estilos) ou o 3D de cordel */
   videoStyle: VideoStyle;
+  /** duração desejada do vídeo, em segundos (5 a 180) */
+  videoDuration: string;
 }
 
 const STORAGE_KEY = 'xilo.settings.v2';
@@ -50,6 +52,7 @@ export const DEFAULT_SETTINGS: Settings = {
   ttsVoice: 'pt-BR-AntonioNeural',
   ttsRate: '1',
   videoStyle: 'xilogravura',
+  videoDuration: '30',
 };
 
 export function loadSettings(): Settings {
