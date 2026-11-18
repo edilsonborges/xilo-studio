@@ -21,6 +21,31 @@ export const AI_IMAGE_LIMIT = 60;
 
 export type TokenPurpose = 'invite' | 'reset';
 
+export type EventStatus = 'ok' | 'fail' | 'info';
+/** O registro de atividade guarda 180 dias. */
+export const EVENT_RETENTION = 180 * 24 * 60 * 60_000;
+
+export interface ActivityEvent {
+  id: number;
+  at: number;
+  email: string;
+  name: string;
+  kind: string;
+  status: EventStatus;
+  detail: Record<string, unknown>;
+}
+
+export interface ActivitySummary {
+  email: string;
+  name: string;
+  videos: number;
+  exports: number;
+  narrations: number;
+  images: number;
+  failures: number;
+  lastAt: number;
+}
+
 export interface User { id: string; name: string; email: string; admin: boolean }
 
 export interface UserSummary extends User {
@@ -64,7 +89,7 @@ export class AuthStore {
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     const version = this.db.pragma('user_version', { simple: true }) as number;
-    if (version > 1) {
+    if (version > 2) {
       this.db.close();
       throw new Error('Banco de dados requer uma versão mais recente do servidor.');
     }
@@ -98,11 +123,68 @@ export class AuthStore {
         reset_at INTEGER NOT NULL
       );
     `);
-    this.db.pragma('user_version = 1');
+    // v2: registro de atividade. Sem chave estrangeira: o histórico fica mesmo se a conta for removida.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at INTEGER NOT NULL,
+        user_id TEXT,
+        email TEXT NOT NULL,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        detail TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS events_at ON events(at);
+      CREATE INDEX IF NOT EXISTS events_email ON events(email);
+    `);
+    this.db.pragma('user_version = 2');
     this.provisionAdmins(now);
   }
 
   close(): void { if (this.db.open) this.db.close(); }
+
+  // ---- registro de atividade (só administradores leem) ----
+
+  logEvent(who: { id?: string; email: string; name?: string } | null, kind: string, status: EventStatus, detail: Record<string, unknown>, now: number): void {
+    try {
+      this.db.prepare('INSERT INTO events(at, user_id, email, name, kind, status, detail) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(now, who?.id ?? null, who?.email ?? '', who?.name ?? '', kind, status, JSON.stringify(detail).slice(0, 6000));
+      // de vez em quando, apaga o que passou do prazo
+      if (now % 50 === 0) this.db.prepare('DELETE FROM events WHERE at < ?').run(now - EVENT_RETENTION);
+    } catch {
+      // o registro nunca pode derrubar a ação principal
+    }
+  }
+
+  listEvents(filter: { limit: number; before?: number; kind?: string; email?: string }): ActivityEvent[] {
+    const where: string[] = [];
+    const args: Array<string | number> = [];
+    if (filter.before) { where.push('id < ?'); args.push(filter.before); }
+    if (filter.kind) { where.push('kind = ?'); args.push(filter.kind); }
+    if (filter.email) { where.push('email = ?'); args.push(filter.email); }
+    const rows = this.db.prepare(`SELECT * FROM events ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY id DESC LIMIT ?`)
+      .all(...args, filter.limit) as Array<{ id: number; at: number; user_id: string | null; email: string; name: string; kind: string; status: EventStatus; detail: string }>;
+    return rows.map((row) => {
+      let detail: Record<string, unknown> = {};
+      try { detail = JSON.parse(row.detail) as Record<string, unknown>; } catch { /* registro cortado */ }
+      return { id: row.id, at: row.at, email: row.email, name: row.name, kind: row.kind, status: row.status, detail };
+    });
+  }
+
+  /** Resultado por pessoa: quanto cada uma gerou, exportou e falhou. */
+  activitySummary(): ActivitySummary[] {
+    return this.db.prepare(`
+      SELECT email, MAX(name) AS name,
+        SUM(kind = 'video_generated' AND status = 'ok') AS videos,
+        SUM(kind = 'video_exported' AND status = 'ok') AS exports,
+        SUM(kind = 'narration' AND status = 'ok') AS narrations,
+        SUM(kind = 'ai_image' AND status = 'ok') AS images,
+        SUM(status = 'fail') AS failures,
+        MAX(at) AS lastAt
+      FROM events WHERE email != '' GROUP BY email ORDER BY lastAt DESC
+    `).all() as ActivitySummary[];
+  }
   healthy(): boolean { return Boolean(this.db.prepare('SELECT 1').get()); }
   isAdmin(email: string): boolean { return this.admins.has(email.toLowerCase()); }
 

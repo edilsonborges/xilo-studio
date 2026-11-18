@@ -369,3 +369,42 @@ test('cliente do gateway: 202, consulta, extração e URL de consulta só do pr�
   replies.push(json(502, { error: { message: 'image_generation_failed' } }));
   await assert.rejects(gw.startImage('menino'), /502: image_generation_failed/);
 });
+
+test('atividade: só o admin vê; registra login, narração, vídeo e convite; filtra e resume', async (t) => {
+  const { app, sent, flush } = setup(t, null, async () => ({ audio: Buffer.from('x'), words: [] }));
+  await request(app).get('/api/admin/events').expect(401);
+  await request(app).post('/api/auth/login').set('Origin', ORIGIN).send({ email: ADMIN, password: 'senha-errada-1' }).expect(401);
+  const admin = await adminAgent(app, sent, flush);
+  await admin.post('/api/narration').set('Origin', ORIGIN).send({ text: 'Era uma vez.', voice: 'pt-BR-AntonioNeural', rate: 1 }).expect(200);
+  await admin.post('/api/events').set('Origin', ORIGIN)
+    .send({ kind: 'video_generated', status: 'ok', detail: { roteiro: 'Era uma vez.', cenas: 2, estilo: 'Noir' } }).expect(201);
+  await admin.post('/api/events').set('Origin', ORIGIN).send({ kind: 'apagar_tudo', status: 'ok', detail: {} }).expect(400);
+  await request(app).post('/api/events').set('Origin', ORIGIN).send({ kind: 'video_generated', status: 'ok', detail: {} }).expect(401);
+
+  await admin.post('/api/admin/users').set('Origin', ORIGIN).send({ name: 'Lia', email: 'lia@example.com' }).expect(201);
+  const lia = request.agent(app);
+  await lia.post('/api/auth/password/set').set('Origin', ORIGIN).send({ token: tokenFrom(sent.at(-1)), password: PASSWORD }).expect(200);
+  await lia.get('/api/admin/events').expect(403);
+
+  const all = await admin.get('/api/admin/events').expect(200);
+  const kinds = all.body.events.map((e: { kind: string; status: string }) => `${e.kind}:${e.status}`);
+  for (const expected of ['login:fail', 'password_link:ok', 'password_set:ok', 'narration:ok', 'video_generated:ok', 'user_invited:ok']) {
+    assert.ok(kinds.includes(expected), `${expected} em ${kinds.join(', ')}`);
+  }
+  const video = all.body.events.find((e: { kind: string }) => e.kind === 'video_generated');
+  assert.deepEqual(video.detail, { roteiro: 'Era uma vez.', cenas: 2, estilo: 'Noir' });
+  assert.equal(video.email, ADMIN);
+  // nunca guarda senha nem token
+  assert.doesNotMatch(JSON.stringify(all.body), new RegExp(`${PASSWORD}|senha-errada-1|token=`));
+
+  const onlyVideos = await admin.get('/api/admin/events?kind=video_generated').expect(200);
+  assert.equal(onlyVideos.body.events.length, 1);
+  const mine = all.body.summary.find((s: { email: string }) => s.email === ADMIN);
+  assert.equal(mine.videos, 1);
+  assert.equal(mine.narrations, 1);
+  assert.ok(mine.failures >= 1);
+  const page = await admin.get(`/api/admin/events?limit=2`).expect(200);
+  const next = await admin.get(`/api/admin/events?limit=2&before=${page.body.events[1].id}`).expect(200);
+  assert.ok(next.body.events[0].id < page.body.events[1].id);
+  assert.equal(next.body.summary, undefined);
+});

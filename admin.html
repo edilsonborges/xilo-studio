@@ -14,7 +14,7 @@
           <span class="brand-mark" aria-hidden="true">X</span>
           <div>
             <h1>Usuários</h1>
-            <p>Quem pode entrar no Xilo <span class="app-version" title="Versão do Xilo">v%VITE_APP_VERSION%</span></p>
+            <p>Quem pode entrar no Xilo <button class="app-version" id="app-version" type="button" title="Ver as novidades desta versão">v%VITE_APP_VERSION%</button></p>
           </div>
         </div>
         <div class="topbar-actions">
@@ -54,6 +54,36 @@
             <tbody id="users"></tbody>
           </table>
         </div>
+      </section>
+
+      <section class="panel">
+        <h2>Resultado por pessoa</h2>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr><th>Pessoa</th><th class="num">Vídeos</th><th class="num">Exportados</th><th class="num">Narrações</th><th class="num">Imagens</th><th class="num">Falhas</th><th>Última atividade</th></tr>
+            </thead>
+            <tbody id="summary"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" style="display: grid; gap: 14px">
+        <h2>Atividade</h2>
+        <p class="hint">Tudo o que foi feito no Xilo nos últimos 180 dias, do mais recente para o mais antigo.</p>
+        <div class="admin-filters">
+          <select id="filter-email" aria-label="Filtrar por pessoa"><option value="">Todas as pessoas</option></select>
+          <select id="filter-kind" aria-label="Filtrar por tipo"><option value="">Todos os tipos</option></select>
+        </div>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr><th>Quando</th><th>Quem</th><th>O quê</th><th>Resultado</th><th>Detalhes</th></tr>
+            </thead>
+            <tbody id="events"></tbody>
+          </table>
+        </div>
+        <button class="btn admin-more" id="more-events" type="button" hidden>Carregar mais</button>
       </section>
     </div>
 

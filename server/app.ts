@@ -7,7 +7,7 @@ import { createResendMailer, inviteEmail, resetEmail, type Mailer } from './mail
 import { createGateway, type AiOutcome, type Gateway } from './ai.js';
 import { VOICES, edgeNarrator, type Narrator } from './narration.js';
 import { validPasswordInput } from './password.js';
-import { AuthStore, AI_IMAGE_LIMIT, AI_TEXT_LIMIT, NARRATION_LIMIT, SESSION_TTL, invalidCredentials, type TokenPurpose, type User } from './store.js';
+import { type EventStatus, AuthStore, AI_IMAGE_LIMIT, AI_TEXT_LIMIT, NARRATION_LIMIT, SESSION_TTL, invalidCredentials, type TokenPurpose, type User } from './store.js';
 
 // Mesma política que o nginx usava: o app só conversa com o próprio site e com as
 // APIs de IA, porque as chaves do usuário ficam no localStorage.
@@ -38,6 +38,18 @@ const setPasswordSchema = z.object({ token: linkTokenSchema, password: newPasswo
 const createUserSchema = z.object({ name: z.string().trim().min(1).max(80), email: emailSchema }).strict();
 const userIdSchema = z.string().uuid();
 const MAX_NARRATION_CHARS = 6_000;
+/** O que o navegador pode registrar: o que só ele sabe (vídeo gerado, exportado, falhas). */
+const clientEventSchema = z.object({
+  kind: z.enum(['video_generated', 'video_exported', 'generation_failed', 'export_failed']),
+  status: z.enum(['ok', 'fail']),
+  detail: z.record(z.string(), z.union([z.string().max(2_000), z.number(), z.boolean(), z.null()])).refine((d) => Object.keys(d).length <= 20),
+}).strict();
+const eventsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+  before: z.coerce.number().int().positive().optional(),
+  kind: z.string().max(40).optional(),
+  email: z.string().max(254).optional(),
+});
 const aiTextSchema = z.object({ system: z.string().min(1).max(20_000), prompt: z.string().min(1).max(60_000) }).strict();
 const aiImageSchema = z.object({ prompt: z.string().trim().min(1).max(4_000) }).strict();
 /** Consultas pendentes à IA ficam na memória; depois disso o pedido é dado como perdido. */
@@ -183,7 +195,11 @@ export function createApp(options: AppOptions = {}): express.Express {
   // O roteiro da narração pode ser longo; o resto da API recebe só alguns campos.
   const scriptJson = express.json({ limit: '64kb', strict: true, inflate: false });
   app.use('/api', (req, res, next) =>
-    (req.path === '/narration' || req.path === '/ai/text' ? scriptJson : smallJson)(req, res, next));
+    (req.path === '/narration' || req.path === '/ai/text' || req.path === '/events' ? scriptJson : smallJson)(req, res, next));
+
+  /** Registro de atividade para o painel do administrador. */
+  const audit = (who: { id?: string; email: string; name?: string } | null, kind: string, status: EventStatus, detail: Record<string, unknown> = {}): void =>
+    store.logEvent(who, kind, status, detail, now());
 
   app.get('/api/auth/me', (req, res) => {
     res.json({ user: sessionUser(req, res), emailEnabled: Boolean(mailer) });
@@ -197,14 +213,18 @@ export function createApp(options: AppOptions = {}): express.Express {
     }
     const result = await store.login(parsed.data.email, parsed.data.password, clientIp(req), now(), readToken(req));
     if (!result.ok) {
+      audit({ email: parsed.data.email }, 'login', 'fail', { motivo: result.status === 429 ? 'muitas tentativas' : 'e-mail ou senha inválidos' });
       failure(res, result);
       return;
     }
+    audit(result.user, 'login', 'ok');
     startSession(res, result.token);
     res.json({ user: result.user });
   });
 
   app.post('/api/auth/logout', (req, res) => {
+    const leaving = store.currentUser(readToken(req), now());
+    if (leaving) audit(leaving, 'logout', 'ok');
     store.logout(readToken(req));
     res.clearCookie(cookieName, cookieOptions);
     res.json({ ok: true });
@@ -228,6 +248,7 @@ export function createApp(options: AppOptions = {}): express.Express {
     // A resposta sai antes do envio e é igual para qualquer e-mail: não revela quem tem conta.
     res.status(202).json({ ok: true });
     const issued = result.issued;
+    audit(issued ? issued.user : { email: parsed.data.email }, 'password_link', issued ? 'ok' : 'info', { pedido: 'esqueci a senha', ...(issued ? {} : { observação: 'e-mail sem conta' }) });
     if (!issued) return;
     const task = mailer(messageFor(issued.purpose, issued.user, issued.token, crypto.randomUUID()))
       .catch((error: unknown) => {
@@ -262,6 +283,7 @@ export function createApp(options: AppOptions = {}): express.Express {
       failure(res, result);
       return;
     }
+    audit(result.user, 'password_set', 'ok');
     startSession(res, result.token);
     res.json({ user: result.user });
   });
@@ -305,8 +327,10 @@ export function createApp(options: AppOptions = {}): express.Express {
         voice: parsed.data.voice as (typeof VOICES)[number]['id'],
         rate: parsed.data.rate,
       });
+      audit(user, 'narration', 'ok', { voz: parsed.data.voice, velocidade: parsed.data.rate, caracteres: parsed.data.text.length, roteiro: parsed.data.text.slice(0, 1_500) });
       res.json({ audio: audio.toString('base64'), mimeType: 'audio/mpeg', words });
     } catch (error) {
+      audit(user, 'narration', 'fail', { voz: parsed.data.voice, erro: error instanceof Error ? error.message.slice(0, 200) : 'erro desconhecido' });
       console.error(`Falha no Edge TTS: ${error instanceof Error ? error.message : 'erro desconhecido'}`);
       res.status(502).json({ error: 'O Edge TTS não respondeu. Tente de novo em instantes ou envie um áudio seu.' });
     }
@@ -358,7 +382,9 @@ export function createApp(options: AppOptions = {}): express.Express {
     }
     try {
       sendOutcome(res, user.id, await gateway.startText(parsed.data.system, parsed.data.prompt));
+      audit(user, 'ai_text', 'ok', { tamanho: parsed.data.prompt.length });
     } catch (error) {
+      audit(user, 'ai_text', 'fail', { erro: error instanceof Error ? error.message.slice(0, 200) : 'erro desconhecido' });
       aiFailure(res, error);
     }
   });
@@ -380,8 +406,12 @@ export function createApp(options: AppOptions = {}): express.Express {
       return;
     }
     try {
-      sendOutcome(res, user.id, await gateway.startImage(parsed.data.prompt));
+      const outcome = await gateway.startImage(parsed.data.prompt);
+      sendOutcome(res, user.id, outcome);
+      // pedido pendente só conta quando a consulta concluir
+      if (outcome.status === 'completed') audit(user, 'ai_image', 'ok', { descrição: parsed.data.prompt.slice(0, 600) });
     } catch (error) {
+      audit(user, 'ai_image', 'fail', { descrição: parsed.data.prompt.slice(0, 600), erro: error instanceof Error ? error.message.slice(0, 200) : 'erro desconhecido' });
       aiFailure(res, error);
     }
   });
@@ -401,10 +431,29 @@ export function createApp(options: AppOptions = {}): express.Express {
       }
       aiJobs.delete(String(req.params.id));
       sendOutcome(res, user.id, outcome);
+      if (job.kind === 'image') audit(user, 'ai_image', 'ok', { espera: `${Math.round((now() - job.createdAt) / 1000)} s` });
     } catch (error) {
       aiJobs.delete(String(req.params.id));
+      audit(user, job.kind === 'image' ? 'ai_image' : 'ai_text', 'fail', { erro: error instanceof Error ? error.message.slice(0, 200) : 'erro desconhecido' });
       aiFailure(res, error);
     }
+  });
+
+  // O navegador registra o que só ele sabe: vídeo gerado, exportado e falhas.
+  app.post('/api/events', requireUser, (req, res) => {
+    const parsed = clientEventSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Registro inválido.' });
+      return;
+    }
+    const user = res.locals.user as User;
+    const blocked = store.reserve([{ key: `events:${user.id}`, max: 300 }], now());
+    if (blocked) {
+      failure(res, blocked);
+      return;
+    }
+    audit(user, parsed.data.kind, parsed.data.status, parsed.data.detail);
+    res.status(201).json({ ok: true });
   });
 
   // ---- Painel de usuários (só administradores) ----
@@ -427,6 +476,16 @@ export function createApp(options: AppOptions = {}): express.Express {
 
   app.get('/api/admin/users', (_req, res) => {
     res.json({ users: store.listUsers(now()), emailEnabled: Boolean(mailer) });
+  });
+
+  app.get('/api/admin/events', (req, res) => {
+    const parsed = eventsQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Filtro inválido.' });
+      return;
+    }
+    const { limit, before, kind, email } = parsed.data;
+    res.json({ events: store.listEvents({ limit, before, kind: kind || undefined, email: email || undefined }), summary: before ? undefined : store.activitySummary() });
   });
 
   async function sendLink(userId: string): Promise<boolean> {
@@ -453,7 +512,9 @@ export function createApp(options: AppOptions = {}): express.Express {
       failure(res, result);
       return;
     }
-    res.status(201).json({ user: result.user, emailSent: await sendLink(result.user.id) });
+    const emailSent = await sendLink(result.user.id);
+    audit(res.locals.user as User, 'user_invited', emailSent ? 'ok' : 'fail', { convidado: result.user.email, nome: result.user.name, ...(emailSent ? {} : { erro: 'e-mail não enviado' }) });
+    res.status(201).json({ user: result.user, emailSent });
   });
 
   app.post('/api/admin/users/:id/link', async (req, res) => {
@@ -479,11 +540,13 @@ export function createApp(options: AppOptions = {}): express.Express {
       res.status(404).json({ error: 'Usuário não encontrado.' });
       return;
     }
+    const removed = store.listUsers(now()).find((u) => u.id === id.data);
     const result = store.deleteUser(id.data, (res.locals.user as User).id);
     if (!result.ok) {
       failure(res, result);
       return;
     }
+    audit(res.locals.user as User, 'user_removed', 'ok', { removido: removed?.email ?? id.data });
     res.json({ ok: true });
   });
 

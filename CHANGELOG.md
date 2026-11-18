@@ -4,6 +4,13 @@ Todas as mudanças relevantes do Xilo Studio ficam registradas aqui. O formato
 segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões
 seguem o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.5.0] - 2026-11-17
+
+### Adicionado
+
+- A versão ao lado do título agora é clicável e abre as novidades de cada
+  versão, no visual do app.
+
 ## [0.4.0] - 2026-11-17
 
 ### Adicionado
