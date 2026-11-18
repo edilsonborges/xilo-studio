@@ -15,7 +15,10 @@ import {
   TIMES_OF_DAY,
   WEATHERS,
   type SceneSlot,
+  type StorySheet,
 } from '../types';
+import type { DirectorExample } from './examples';
+import type { VariantHint } from './variants';
 import { MOUNTABLE } from './validate';
 
 const scenarioList = PRESETS.map((id) => `  - "${id}"${SCENARIOS[id].indoor ? ' (indoor)' : ''}: ${SCENARIOS[id].hint}`).join('\n');
@@ -26,7 +29,7 @@ export const SYSTEM_PROMPT = `You are the art director of Xilo, an engine that t
 
 You receive the full script and a list of scene slots. Each slot has a fixed id, start time, end time and the words narrated during it. Design one 3D scene per slot that illustrates what is being narrated at that moment. A procedural Three.js engine builds everything from primitives, so you can only use the building blocks listed below.
 
-Reply with a single JSON object and nothing else (no prose, no markdown fences), shaped like this:
+Reply with a single JSON object and nothing else (no prose, no markdown fences), shaped like this (this shows the shape only; do not copy its content):
 
 {
   "scenes": [
@@ -100,6 +103,7 @@ Contract:
 - Return exactly one scene per slot, in order, copying each slot's id, startTime and endTime unchanged. Timing is owned by the audio, not by you.
 - Colors are "#rrggbb" hex strings.
 - camera.target is only used with "follow_character" and must be the id of a character in that scene.
+- characters[].actions is optional: a list of cues like { "at": "<one word copied from that slot's narration>", "do": "<animation>" }. The character starts with "animation" and switches to each cue's action at the moment that word is spoken, so people act in sync with the narration ("chegou" -> walk, "contou" -> talk, "riu" -> laugh). Use it when a slot narrates more than one action or a reaction. A character only travels to targetPosition while its current action is walk, run or carry.
 - targetPosition is optional. When present, the character moves from position to targetPosition over the scene, so pair it with the "walk" animation.
 - props[].color is optional; leave it out to use the preset palette.
 - A character id that appears in several scenes is the same person: keep its skinColor, shirtColor, pantsColor and accessory identical everywhere.
@@ -123,9 +127,39 @@ export interface KnownCharacter {
   shirtColor: string;
   pantsColor: string;
   accessory: string;
+  kind?: string;
 }
 
-export function buildUserPrompt(script: string, slots: SceneSlot[], known: KnownCharacter[]): string {
+export interface PromptExtras {
+  story?: StorySheet | null;
+  examples?: DirectorExample[];
+  hints?: VariantHint[];
+}
+
+export const STORY_PROMPT = `You prepare the story sheet for Xilo, an engine that turns a narrated script into a low-poly 3D video. Read the whole script and fix what must stay the same across scenes.
+
+Reply with a single JSON object and nothing else:
+{
+  "setting": "place and era in a few words, in the script's language",
+  "tone": "two or three adjectives",
+  "cast": [
+    { "id": "short_snake_case_id", "role": "who this is in the story", "trait": "how they move and behave",
+      "kind": ${list(CHARACTER_KINDS)}, "accessory": ${list(ACCESSORIES)},
+      "skinColor": "#rrggbb", "shirtColor": "#rrggbb", "pantsColor": "#rrggbb" }
+  ],
+  "arc": [
+    { "place": "<one of the places below>", "timeOfDay": ${list(TIMES_OF_DAY)}, "weather": ${list(WEATHERS)}, "note": "what happens there" }
+  ]
+}
+
+Places:
+${scenarioList}
+
+Rules:
+- "cast": every person or group that appears, at most 6. A group ("the friends", "the neighbors") becomes two or three entries of different kinds. Give each one distinct clothes colors.
+- "arc": the places in the order the story visits them, with the time of day and weather implied by the text.`;
+
+export function buildUserPrompt(script: string, slots: SceneSlot[], known: KnownCharacter[], extras: PromptExtras = {}): string {
   const parts = [
     `Full script:\n"""\n${script.trim()}\n"""`,
     `Scene slots to design (JSON):\n${JSON.stringify(
@@ -134,6 +168,21 @@ export function buildUserPrompt(script: string, slots: SceneSlot[], known: Known
       1,
     )}`,
   ];
+  if (extras.story) {
+    const { setting, tone, arc, cast } = extras.story;
+    parts.push(`Story sheet. Follow it in every scene (same places, time of day, weather and people):\n${JSON.stringify({
+      setting, tone, arc, cast: cast.map(({ id, role, trait, kind }) => ({ id, role, trait, kind })),
+    })}`);
+  }
+  if (extras.examples?.length) {
+    parts.push(`Worked examples from other stories. They show how to stage a scene well (reactions, cues in "actions", vehicles, weather). Do not copy their content:\n${extras.examples
+      .map((e) => `Narration: "${e.narration}"\nScene: ${JSON.stringify(e.scene)}`)
+      .join('\n\n')}`);
+  }
+  if (extras.hints?.length) {
+    const wanted = new Set(slots.map((s) => s.id));
+    parts.push(`Variation for this take. Where the narration does not say otherwise, stage each scene like this (it makes a new take differ from the previous one):\n${JSON.stringify(extras.hints.filter((h) => wanted.has(h.id)))}`);
+  }
   if (known.length) {
     parts.push(
       `Characters already established in earlier scenes. Reuse these ids and looks when the same people appear:\n${JSON.stringify(known)}`,

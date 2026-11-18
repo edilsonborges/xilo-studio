@@ -147,6 +147,33 @@ export interface CharacterDef {
   kind?: CharacterKind;
   /** id de um veículo ou cavalo da cena: o personagem vai montado nele */
   mount?: string;
+  /**
+   * Sequência de ações durante a cena. `animation` vale até a primeira deixa;
+   * cada deixa troca a ação em `at` segundos depois do início da cena.
+   */
+  actions?: ActionCue[];
+}
+
+/** Ficha da história: o que não muda entre as cenas. */
+export interface StorySheet {
+  setting: string;
+  tone: string;
+  cast: Array<{
+    id: string;
+    role: string;
+    trait: string;
+    kind: CharacterKind;
+    skinColor: string;
+    shirtColor: string;
+    pantsColor: string;
+    accessory: Accessory;
+  }>;
+  arc: Array<{ place: Preset; timeOfDay: TimeOfDay; weather: Weather; note: string }>;
+}
+
+export interface ActionCue {
+  at: number;
+  do: AnimationName;
 }
 
 export interface PropDef {
@@ -207,4 +234,6 @@ export interface SceneSlot {
   startTime: number;
   endTime: number;
   text: string;
+  /** palavras narradas na cena, com o instante em que cada uma começa */
+  words?: Array<{ text: string; start: number }>;
 }

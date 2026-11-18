@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { SCENARIOS, SCENARIO_CATEGORIES, type Scenario } from '../scenarios.js';
 import { PRESETS, PROP_TYPES, type SceneSlot } from '../types.js';
+import { EXAMPLES, selectExamples } from './examples.js';
 import { generateScenesByRules } from './rules.js';
-import { sanitizeSceneGraph } from './validate.js';
+import { variantHints } from './variants.js';
+import { sanitizeSceneGraph, sanitizeStorySheet } from './validate.js';
 
 const one = (text: string): SceneSlot[] => [{ id: 'scene_1', startTime: 0, endTime: 6, text }];
 const scene = (text: string) => generateScenesByRules(one(text), text)[0];
@@ -145,4 +147,112 @@ test('JSON antigo (v0.2.0) continua válido', () => {
   assert.equal(s.environment.weather, undefined);
   assert.equal(s.characters[0].kind, 'man');
   assert.equal(s.props[0].type, 'cactus');
+});
+
+/** Fatia com o tempo de cada palavra, como o splitScenes entrega. */
+const timedSlot = (text: string, duration = 6): SceneSlot => {
+  const list = text.split(/\s+/);
+  return { id: 'scene_1', startTime: 10, endTime: 10 + duration, text, words: list.map((w, i) => ({ text: w, start: 10 + (i * duration) / list.length })) };
+};
+
+test('ações no tempo da narração: o vaqueiro chega andando e depois conta; os amigos escutam', () => {
+  const slot = timedSlot('Ao entardecer, ele chegou à vila e contou aos amigos sobre a longa viagem.', 8);
+  const [s] = generateScenesByRules([slot], slot.text);
+  const [hero, friend] = s.characters;
+  assert.equal(hero.animation, 'idle', 'antes de "chegou" ele espera parado');
+  assert.deepEqual(hero.actions?.map((c) => c.do), ['walk', 'talk']);
+  const chegou = slot.words!.find((w) => w.text === 'chegou')!.start - slot.startTime;
+  assert.ok(Math.abs(hero.actions![0].at - chegou) < 0.02, 'a deixa cai no instante da palavra');
+  assert.ok(hero.targetPosition);
+  assert.equal(friend.animation, 'listen');
+  assert.equal(friend.targetPosition, undefined);
+  assert.notEqual(s.camera.movement, 'follow_character');
+  // com a fala logo no começo, ele já entra andando
+  const fast = timedSlot('Ele chegou à vila e contou aos amigos.', 6);
+  const quick = generateScenesByRules([fast], fast.text)[0].characters[0];
+  assert.equal(quick.animation, 'walk');
+  assert.deepEqual(quick.actions?.map((c) => c.do), ['talk']);
+});
+
+test('"caminhava" é andar, não caminhão', () => {
+  const s = scene('O vaqueiro caminhava pela estrada de terra do sertão.');
+  assert.equal(s.characters[0].animation, 'walk');
+  assert.ok(!s.props.some((p) => p.type === 'truck'));
+  assert.ok(scene('O caminhão seguiu pela estrada.').props.some((p) => p.type === 'truck'));
+});
+
+test('quem assiste reage na hora da palavra', () => {
+  const slot = timedSlot('O velhinho corria pela praça e os vizinhos não acreditaram no que viam.', 6);
+  const [s] = generateScenesByRules([slot], slot.text);
+  assert.equal(s.characters[0].animation, 'run');
+  assert.equal(s.characters[1].animation, 'listen');
+  assert.equal(s.characters[1].actions?.[0].do, 'surprised');
+  assert.ok(s.characters[1].actions![0].at > 3);
+});
+
+test('validador: deixas por palavra ou por segundos, ordenadas, sem repetir, e destino para quem anda', () => {
+  const slot = timedSlot('ele chegou cansado sentou e depois riu muito', 8);
+  const graph = sanitizeSceneGraph({ scenes: [{ id: 'scene_1', characters: [
+    { id: 'a', animation: 'idle', actions: [{ at: 'riu', do: 'laughing' }, { at: 'chegou', do: 'walk' }, { at: 'palavra_que_nao_existe', do: 'jump' }, { at: 99, do: 'clap' }] },
+    { id: 'b', animation: 'listen', actions: [{ at: 0, do: 'talk' }, { at: 2.5, do: 'talk' }, { at: '3.5', do: 'nod' }] },
+  ] }] }, [slot]);
+  const [a, b] = graph.scenes[0].characters;
+  assert.deepEqual(a.actions, [{ at: 1, do: 'walk' }, { at: 6, do: 'laugh' }, { at: 7.7, do: 'clap' }]);
+  assert.ok(a.targetPosition, 'quem anda numa deixa ganha destino');
+  assert.equal(b.animation, 'talk', 'deixa no instante zero vira a ação inicial');
+  assert.deepEqual(b.actions, [{ at: 3.5, do: 'nod' }]);
+});
+
+test('variação: o mesmo roteiro gera versões diferentes, e a mesma variação se repete igual', () => {
+  const text = 'O vaqueiro caminhava pela estrada de terra do sertão. O sol queimava a caatinga.';
+  const slots: SceneSlot[] = [{ id: 'scene_1', startTime: 0, endTime: 5, text: text.split('. ')[0] }, { id: 'scene_2', startTime: 5, endTime: 10, text: text.split('. ')[1] }];
+  const v0 = generateScenesByRules(slots, text);
+  const v1 = generateScenesByRules(slots, text, 1);
+  const v2 = generateScenesByRules(slots, text, 2);
+  assert.deepEqual(generateScenesByRules(slots, text, 1), v1);
+  assert.notDeepEqual(v0, v1);
+  assert.notDeepEqual(v1, v2);
+  // o roteiro continua mandando: lugar e ação não mudam
+  for (const v of [v1, v2]) {
+    assert.equal(v[0].environment.preset, v0[0].environment.preset);
+    assert.equal(v[0].characters[0].animation, 'walk');
+  }
+  assert.ok(v1[0].props.some((p) => p.type === 'goat'), 'variação 2 traz um animal do lugar');
+  assert.equal(v2[0].environment.weather, 'wind');
+  const hints = variantHints(slots, 1);
+  assert.notDeepEqual(variantHints(slots, 0), hints);
+  assert.notEqual(hints[0].camera, hints[1].camera);
+});
+
+test('biblioteca: 8 exemplos válidos para o motor, escolhidos pelo cenário do roteiro', () => {
+  assert.equal(EXAMPLES.length, 8);
+  for (const example of EXAMPLES) {
+    const list = example.narration.split(/\s+/);
+    const slot: SceneSlot = { id: 'scene_1', startTime: 0, endTime: 8, text: example.narration, words: list.map((w, i) => ({ text: w, start: (i * 8) / list.length })) };
+    const scene = sanitizeSceneGraph({ scenes: [{ id: 'scene_1', ...example.scene }] }, [slot]).scenes[0];
+    const raw = example.scene as { environment: { preset: string }; characters: Array<{ animation: string; kind: string; mount?: string; actions?: unknown[] }>; props: Array<{ type: string }> };
+    assert.equal(scene.environment.preset, raw.environment.preset, example.id);
+    raw.characters.forEach((c, i) => {
+      assert.equal(scene.characters[i].animation, c.animation, `${example.id} ação`);
+      assert.equal(scene.characters[i].kind, c.kind, `${example.id} tipo`);
+      assert.equal(scene.characters[i].mount, c.mount, `${example.id} assento`);
+      assert.equal(scene.characters[i].actions?.length ?? 0, c.actions?.length ?? 0, `${example.id}: toda deixa usa uma palavra da narração`);
+    });
+    raw.props.forEach((p, i) => assert.equal(scene.props[i].type, p.type, `${example.id} objeto`));
+  }
+  assert.deepEqual(selectExamples(['open_sea']).map((e) => e.id), ['mar', 'sertao']);
+  assert.equal(selectExamples(['kitchen', 'kitchen', 'church'])[0].id, 'familia');
+  assert.equal(selectExamples([]).length, 2);
+});
+
+test('ficha da história: normaliza elenco e arco, e recusa resposta vazia', () => {
+  const sheet = sanitizeStorySheet({
+    setting: 'Bahia, anos 1930', tone: 'saudoso',
+    cast: [{ id: 'O Vaqueiro', kind: 'homem', accessory: 'cangaceiro', shirtColor: 'f4f1ea', trait: 'cansado' }, { id: 'amiga', kind: 'old woman' }],
+    arc: [{ place: 'estrada', timeOfDay: 'manha', weather: 'sunny' }, { place: 'vila', timeOfDay: 'entardecer' }, { place: 'quarto', timeOfDay: 'noite' }],
+  });
+  assert.deepEqual(sheet?.cast.map((c) => [c.id, c.kind, c.accessory]), [['o_vaqueiro', 'man', 'leather_hat'], ['amiga', 'elderly', 'none']]);
+  assert.deepEqual(sheet?.arc.map((a) => [a.place, a.timeOfDay]), [['country_road', 'day'], ['village_sunset', 'sunset'], ['interior_night', 'night']]);
+  assert.equal(sanitizeStorySheet({ nada: true }), null);
+  assert.equal(sanitizeStorySheet('texto solto'), null);
 });

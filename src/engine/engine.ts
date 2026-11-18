@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import type { SceneDef, SceneGraphJSON } from '../types';
 import { clamp, hashString } from '../util';
 import { computeCameraPose } from './camera';
-import { UPPER_BODY, animateCharacter, createCharacter, type CharacterRig } from './character';
+import { UPPER_BODY, animateCharacter, createCharacter, travelProgress, type CharacterRig, type Cue } from './character';
 import { createEnvironment, type EnvironmentObject } from './environment';
 import { createProp, type PropObject } from './props';
 import { StylePass } from './post';
@@ -33,6 +33,7 @@ interface BuiltCharacter {
   id: string;
   /** veículo, cavalo ou assento onde o personagem está */
   seatedOn?: BuiltProp;
+  cues?: Cue[];
 }
 
 interface BuiltProp {
@@ -163,6 +164,7 @@ export class SceneEngine {
       const root = c.rig.root;
       let seatHeight: number | undefined;
       let moving = false;
+      let walkingNow = false;
       if (c.seatedOn?.object.seat) {
         // vai junto com o veículo/assento: posição do assento no mundo
         const group = c.seatedOn.object.group;
@@ -173,17 +175,19 @@ export class SceneEngine {
         seatHeight = (sy * group.scale.y) / root.scale.y;
         moving = c.seatedOn.moves && progress < 1;
       } else {
-        // deslocamento linear: combina com o ciclo de passos em velocidade constante
-        root.position.lerpVectors(c.start, c.end, c.moves ? progress : 0);
+        // deslocamento em velocidade constante, só enquanto a ação em curso é de andar
+        const travel = travelProgress(c.animation, c.cues, t - def.startTime, span);
+        root.position.lerpVectors(c.start, c.end, c.moves ? travel.progress : 0);
         root.rotation.y = c.facing;
+        walkingNow = c.moves && travel.travelling;
       }
       animateCharacter(c.rig, c.animation, t, {
         restHeight: c.restHeight,
         seatHeight,
         moving,
-        travelling: c.moves && progress < 1,
+        travelling: walkingNow,
         elapsed: t - def.startTime,
-      });
+      }, c.cues);
       if (def.camera.movement === 'follow_character' && def.camera.target === c.id) {
         follow = { start: c.seatedOn ? c.seatedOn.start.clone().add(tmp) : c.start, current: root.position.clone() };
       }
@@ -235,7 +239,7 @@ export class SceneEngine {
       scene.add(rig.root);
       const start = new THREE.Vector3(...c.position);
       const end = c.targetPosition ? new THREE.Vector3(...c.targetPosition) : start.clone();
-      const built: BuiltCharacter = { rig, start, end, moves: start.distanceTo(end) > 0.05, facing: 0, restHeight: 0, animation: c.animation, id: c.id };
+      const built: BuiltCharacter = { rig, start, end, moves: start.distanceTo(end) > 0.05, facing: 0, restHeight: 0, animation: c.animation, id: c.id, cues: c.actions };
 
       const mount = c.mount ? propById.get(c.mount) : undefined;
       if (mount?.object.seat) {

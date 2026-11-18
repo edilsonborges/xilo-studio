@@ -4,6 +4,29 @@ Todas as mudanças relevantes do Xilo Studio ficam registradas aqui. O formato
 segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões
 seguem o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.6.0] - 2026-11-17
+
+### Adicionado
+
+- Ações no tempo da narração: no vídeo 3D, cada personagem pode fazer mais de
+  uma coisa na mesma cena, na hora em que a palavra é falada. Em "ele chegou à
+  vila e contou aos amigos", ele chega andando e só então começa a contar. A
+  troca de uma ação para outra é suave, e ele só se desloca enquanto anda.
+- Ficha da história: antes de montar as cenas, a IA do Xilo lê o roteiro
+  inteiro e fixa época e lugar, tom, elenco e a sequência de lugares, hora e
+  clima. As cenas seguem a ficha, e ela aparece na lista de etapas.
+- Variações: gerar de novo o mesmo roteiro produz outra versão coerente, com
+  outras câmeras, objetos, companhia e ambiente. O lugar e as ações do roteiro
+  não mudam.
+- A IA do Xilo passou a consultar oito histórias de exemplo (sertão, cidade,
+  infância, festa junina, mar, família, fé e humor) e usa as mais próximas do
+  roteiro.
+
+### Corrigido
+
+- "Caminhava" era lido como "caminhão" pelo gerador sem IA, e o personagem
+  aparecia dirigindo um caminhão.
+
 ## [0.5.0] - 2026-11-17
 
 ### Adicionado

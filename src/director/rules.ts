@@ -9,6 +9,7 @@ import { SCENARIOS, type Lexicon } from '../scenarios';
 import {
   PRESETS,
   type Accessory,
+  type ActionCue,
   type AnimationName,
   type CameraDef,
   type CharacterDef,
@@ -63,7 +64,7 @@ const PROP_WORDS: Array<[PropType, Lexicon]> = [
 
 const VEHICLE_WORDS: Array<[PropType, Lexicon]> = [
   ['car', { stems: ['carro', 'automov', 'taxi', 'fusca'] }],
-  ['truck', { stems: ['caminha', 'carret'] }],
+  ['truck', { stems: ['caminhao', 'caminhoes', 'caminhon', 'carret'] }],
   ['bus', { stems: ['onibus', 'busao', 'lotacao'] }],
   ['bicycle', { stems: ['bicicleta', 'bike', 'pedal'] }],
   ['motorcycle', { stems: ['moto', 'motocicleta', 'lambreta'] }],
@@ -297,7 +298,33 @@ const SEAT_POSE: Partial<Record<PropType, AnimationName>> = {
   car: 'drive', truck: 'drive', bus: 'drive', bicycle: 'ride', motorcycle: 'ride', horse: 'ride', boat: 'sit', cart: 'sit',
 };
 
-export function generateScenesByRules(slots: SceneSlot[], script: string): SceneDef[] {
+const LOCO: ReadonlySet<AnimationName> = new Set<AnimationName>(['walk', 'run', 'carry']);
+
+/** Ações na ordem em que são narradas, cada uma no instante em que a palavra é falada. */
+function cuesFromWords(slot: SceneSlot, table: Array<[AnimationName, Lexicon]>): ActionCue[] {
+  const out: ActionCue[] = [];
+  let previous = '';
+  for (const word of slot.words ?? []) {
+    const key = wordKey(word.text);
+    if (!key) continue;
+    // expressões de duas palavras ("não acreditaram") contam na segunda
+    const pair = `${previous} ${key}`;
+    previous = key;
+    const hit = table.find(([, lex]) => lex.exact?.includes(key) || lex.stems?.some((stem) => (stem.includes(' ') ? pair.startsWith(stem) : key.startsWith(stem))));
+    if (hit && out.at(-1)?.do !== hit[0]) out.push({ at: Math.max(0, Math.round((word.start - slot.startTime) * 100) / 100), do: hit[0] });
+  }
+  return out;
+}
+
+const VARIATION_ANIMAL: Partial<Record<string, PropType>> = {
+  'Sertão e campo': 'goat', Cidade: 'dog', Natureza: 'bird', 'Litoral e água': 'bird', 'Festas e sonho': 'dog',
+};
+
+/**
+ * `variation` muda as escolhas livres (lado, câmera, objetos, um animal, vento)
+ * sem contrariar o roteiro: gerar de novo dá outra versão coerente.
+ */
+export function generateScenesByRules(slots: SceneSlot[], script: string, variation = 0): SceneDef[] {
   const scriptCount = matcher(script);
   let preset: Preset = pickPreset(scriptCount, null) ?? 'sertao_day';
   const heroKind = protagonistKind(script);
@@ -308,14 +335,14 @@ export function generateScenesByRules(slots: SceneSlot[], script: string): Scene
   let time: TimeOfDay | null = null;
   let lastTitle: string | undefined;
   let lastText = '';
-  let cameraCycle = 0;
+  let cameraCycle = variation;
 
   return slots.map((slot, index) => {
     // cena sem fala (silêncio) herda o clima da anterior
     const text = slot.text.trim() || lastText;
     lastText = text;
     const count = matcher(text);
-    const rng = makeRng(hashString(`${slot.id}|${text}`));
+    const rng = makeRng(hashString(`${slot.id}|${text}${variation ? `|${variation}` : ''}`));
 
     const previousPreset = preset;
     preset = pickPreset(count, preset) ?? preset;
@@ -338,11 +365,17 @@ export function generateScenesByRules(slots: SceneSlot[], script: string): Scene
     const travels = vehicle !== null && (animation === 'drive' || animation === 'ride' || animation === 'walk' || animation === 'run' || count({ stems: ['viaj', 'partiu', 'seguiu', 'chegou', 'foi de', 'naveg'] }) > 0);
     if (vehicle && travels) animation = SEAT_POSE[vehicle] ?? animation;
 
+    // mais de uma ação narrada na cena: o protagonista faz cada uma na hora da sua palavra
+    const sequence = animation === 'sleep' || animation === 'sit' || vehicle ? [] : cuesFromWords(slot, watcherReacts ? ACTIONS : [...ACTIONS, ...REACTIONS]);
+    const mixed = sequence.length >= 2;
+    const reactionCue = watcherReacts ? cuesFromWords(slot, REACTIONS)[0] : undefined;
+
     const hasCompany = animation !== 'sleep' && (count(COMPANY) > 0 || animation === 'talk' || animation === 'dance' || animation === 'hug');
-    const dir = index % 2 === 0 ? 1 : -1;
-    const walking = (animation === 'walk' || animation === 'run' || animation === 'carry') && !vehicle;
-    const from: Vec3 = walking ? [-1.7 * dir, 0, -0.8] : [hasCompany ? -0.85 : 0, 0, 0];
-    const to: Vec3 = [1.5 * dir, 0, 1.4];
+    const dir = (index + variation) % 2 === 0 ? 1 : -1;
+    const walking = (mixed ? sequence.some((cue) => LOCO.has(cue.do)) : LOCO.has(animation)) && !vehicle;
+    // quem anda e depois para (chegou e contou) termina perto de quem espera
+    const from: Vec3 = walking ? (mixed ? [-1.9 * dir, 0, -1] : [-1.7 * dir, 0, -0.8]) : [hasCompany ? -0.85 : 0, 0, 0];
+    const to: Vec3 = mixed ? [-0.5 * dir, 0, 0.6] : [1.5 * dir, 0, 1.4];
 
     const props: PropDef[] = [];
     const protagonist: CharacterDef = {
@@ -353,6 +386,12 @@ export function generateScenesByRules(slots: SceneSlot[], script: string): Scene
       animation,
     };
     if (walking) protagonist.targetPosition = to;
+    if (mixed) {
+      // a primeira ação vale desde o início se vier logo; senão ele espera parado
+      const startsNow = sequence[0].at < 1.5;
+      protagonist.animation = startsNow ? sequence[0].do : 'idle';
+      protagonist.actions = startsNow ? sequence.slice(1) : sequence;
+    }
 
     let vehicleStart: Vec3 | null = null;
     if (vehicle) {
@@ -379,15 +418,20 @@ export function generateScenesByRules(slots: SceneSlot[], script: string): Scene
             : animation === 'carry' ? 'walk'
               : SHARED.includes(animation) ? animation
                 : 'listen';
-      const follows = walking && !watcherReacts;
+      const follows = walking && !watcherReacts && !mixed;
       const companion: CharacterDef = {
         id: 'companion',
         ...COMPANION_LOOK,
         ...(kind === 'child' ? { accessory: 'cap' as Accessory } : kind === 'elderly' ? { accessory: 'headscarf' as Accessory } : {}),
         kind,
-        position: follows ? [from[0] - 1.1 * dir, 0, from[2] - 0.6] : walking ? [1.9 * -dir, 0, 1.2] : [0.85, 0, 0.15],
-        animation: companionAnimation,
+        position: follows ? [from[0] - 1.1 * dir, 0, from[2] - 0.6] : walking ? (mixed ? [0.9 * dir, 0, 0.5] : [1.9 * -dir, 0, 1.2]) : [0.85, 0, 0.15],
+        animation: mixed && !watcherReacts ? 'listen' : companionAnimation,
       };
+      // quem assiste escuta e reage na hora da palavra ("não acreditaram")
+      if (reactionCue && reactionCue.at >= 1.5) {
+        companion.animation = 'listen';
+        companion.actions = [reactionCue];
+      }
       if (follows) companion.targetPosition = [to[0] - 1.1 * dir, 0, to[2] - 0.6];
       characters.push(companion);
     }
@@ -405,8 +449,13 @@ export function generateScenesByRules(slots: SceneSlot[], script: string): Scene
       wanted.unshift(indoor ? (preset === 'church' ? 'pew' : preset === 'classroom' ? 'desk' : 'chair') : 'bench');
     }
     if (walking && !indoor && !wanted.includes('road') && preset !== 'open_sea' && preset !== 'beach') wanted.push('road');
+    // variações: um animal do lugar e outra ordem de objetos
+    const hasAnimal = wanted.some((t) => ['dog', 'chicken', 'bird', 'goat', 'animal', 'horse'].includes(t));
+    const extraAnimal = VARIATION_ANIMAL[scenario.category];
+    if (variation % 3 === 1 && !indoor && !hasAnimal && extraAnimal && preset !== 'open_sea') wanted.push(extraAnimal);
     const target = indoor ? 3 : 5;
-    for (const type of scenario.dressing) {
+    const dressing = scenario.dressing.map((_, i, list) => list[(i + variation) % list.length]);
+    for (const type of dressing) {
       if (wanted.length >= target) break;
       const repeatable = ['tree', 'cactus', 'rustic_house', 'building', 'market_stall', 'flowers', 'palm_tree', 'rock', 'bunting', 'desk', 'pew', 'dry_tree', 'lamp_post'].includes(type);
       if (repeatable || !wanted.includes(type)) wanted.push(type);
@@ -461,12 +510,12 @@ export function generateScenesByRules(slots: SceneSlot[], script: string): Scene
     }
 
     // ----- ambiente e câmera -----
-    const sceneWeather = indoor ? undefined : weather ?? undefined;
+    const sceneWeather = indoor ? undefined : weather ?? (variation % 3 === 2 ? 'wind' : undefined);
     const sceneTime = time ?? undefined;
     const camera = buildCamera(index, animation, hasCompany, vehicleStart ?? from, cameraCycle, {
       indoor,
       storm: sceneWeather === 'storm',
-      moving: walking || (vehicleStart !== null),
+      moving: (walking && !mixed) || (vehicleStart !== null),
     });
     if (index > 0 && !walking && !vehicleStart && animation !== 'sleep') cameraCycle++;
 

@@ -26,6 +26,8 @@ export function splitScenes(timeline: Timeline): SceneSlot[] {
       .map((w) => w.text)
       .join(' ');
 
+  const timed = (from: number, to: number) => words.slice(from, to).map((w) => ({ text: w.text, start: w.start }));
+
   const slots: SceneSlot[] = [];
   let first = 0; // primeira palavra da cena em construção
   let t0 = 0;
@@ -59,12 +61,12 @@ export function splitScenes(timeline: Timeline): SceneSlot[] {
       next = first;
       while (next < n && words[next].start < cut) next++;
     }
-    slots.push({ id: '', startTime: t0, endTime: cut, text: textOf(first, next) });
+    slots.push({ id: '', startTime: t0, endTime: cut, text: textOf(first, next), words: timed(first, next) });
     first = next;
     t0 = cut;
   }
 
-  slots.push({ id: '', startTime: t0, endTime: duration, text: textOf(first, n) });
+  slots.push({ id: '', startTime: t0, endTime: duration, text: textOf(first, n), words: timed(first, n) });
   slots.forEach((slot, i) => {
     slot.id = `scene_${i + 1}`;
     slot.startTime = Math.round(slot.startTime * 1000) / 1000;
