@@ -60,6 +60,8 @@ quem usa, veja o [CHANGELOG](../CHANGELOG.md).
 | 0.5.0 | #9 → #10 | versão clicável com modal de novidades; registro de atividade no painel |
 | 0.6.0 | #11 → #12 | ficha da história, variações, biblioteca de exemplos, ações no tempo da narração |
 | 0.7.0 | #13 → #14 | seletor de estilo com imagens, exemplos em rodízio, "melhorar texto", slider de duração e esta documentação |
+| 0.8.0 | → #16 | VoiceStudio, player e histórico de narração, estilos de legenda, colisões no 3D (feita por outra sessão) |
+| 0.8.1 | #17 → #18 | voz inicial volta a funcionar onde não há VoiceStudio |
 
 O registro de atividade do painel ficou fora das notas públicas da 0.5.0, a
 pedido.

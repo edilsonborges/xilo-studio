@@ -72,6 +72,32 @@ function wav(chunks: Buffer[]): Buffer {
   return Buffer.concat([header, ...chunks]);
 }
 
+/**
+ * Onde o VoiceStudio não está rodando, o Xilo esconde essas vozes e usa o
+ * Edge TTS. Qualquer resposta HTTP conta como "no
+ * ar"; o resultado vale por um minuto para não sondar a cada pedido.
+ */
+export function createStudioProbe(config: VoiceStudioConfig, request = fetch, now: () => number = Date.now): () => Promise<boolean> {
+  let checkedAt = -Infinity;
+  let available = false;
+  let pending: Promise<boolean> | null = null;
+  return () => {
+    if (now() - checkedAt < 60_000) return Promise.resolve(available);
+    pending ??= request(new URL('/', config.url), { signal: AbortSignal.timeout(2_000), redirect: 'manual' })
+      .then(async (response) => {
+        await response.body?.cancel();
+        return true;
+      }, () => false)
+      .then((result) => {
+        available = result;
+        checkedAt = now();
+        pending = null;
+        return result;
+      });
+    return pending;
+  };
+}
+
 export function createVoiceStudio(config: VoiceStudioConfig, request = fetch): Narrator {
   return async ({ text, rate, voice: id }) => {
     const style = studioStyle(id);

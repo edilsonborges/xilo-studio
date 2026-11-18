@@ -426,3 +426,36 @@ test('VoiceStudio é a primeira voz e entrega WAV por consulta autenticada', asy
   assert.deepEqual(done.body.words, []);
   assert.equal(Buffer.from(done.body.audio, 'base64').toString(), 'wav-falso');
 });
+
+test('sem VoiceStudio no servidor: as vozes dele somem e a voz inicial é a do Edge', async (t) => {
+  const used: string[] = [];
+  const dir = mkdtempSync(join(tmpdir(), 'xilo-test-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeDist(join(dir, 'dist'));
+  const sent: Email[] = [];
+  const pending: Promise<void>[] = [];
+  const app = createApp({
+    config: {
+      databasePath: join(dir, 'x.sqlite'), appOrigin: ORIGIN, port: 0, nodeEnv: 'production',
+      resendFrom: 'x <x@example.com>', distPath: join(dir, 'dist'), adminEmails: [ADMIN], trustCloudflareIp: false,
+    },
+    mailer: async (message) => { sent.push(message); },
+    onBackgroundTask: (task) => pending.push(task),
+    narrator: async (request) => { used.push(request.voice); return { audio: Buffer.from('x'), words: [] }; },
+    studioAvailable: async () => false,
+  });
+  t.after(() => app.locals.close());
+  const admin = await adminAgent(app, sent, () => Promise.all(pending.splice(0)));
+
+  const voices = await admin.get('/api/narration/voices').expect(200);
+  assert.equal(voices.body.voiceStudio, false);
+  assert.deepEqual(voices.body.voices.map((v: { id: string }) => v.id), ['pt-BR-AntonioNeural', 'pt-BR-FranciscaNeural', 'pt-BR-ThalitaMultilingualNeural']);
+
+  // sem voz no pedido, usa a do Edge e responde na hora
+  await admin.post('/api/narration').set('Origin', ORIGIN).send({ text: 'Olá.', rate: 1 }).expect(200);
+  assert.deepEqual(used, ['pt-BR-AntonioNeural']);
+  // pedir uma voz do VoiceStudio é recusado sem criar tarefa
+  const refused = await admin.post('/api/narration').set('Origin', ORIGIN).send({ text: 'Olá.', voice: 'voicestudio-pt-br', rate: 1 }).expect(503);
+  assert.match(refused.body.error, /Edge TTS/);
+  assert.equal(used.length, 1);
+});

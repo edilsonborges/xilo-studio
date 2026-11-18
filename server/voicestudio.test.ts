@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createVoiceStudio, VOICESTUDIO_ID } from './voicestudio.js';
+import { createStudioProbe } from './voicestudio.js';
 
 test('VoiceStudio divide o roteiro no limite da API e reúne PCM em um único WAV', async () => {
   const parts: string[] = [];
@@ -35,4 +36,22 @@ test('estilos de narração selecionam timbre e combinam o ritmo com a velocidad
     await speak({ text: 'Chove na cidade.', voice, rate: 0.9 });
   }
   assert.deepEqual(calls, [['pf_dora', 0.9], ['pm_alex', 0.9 * 1.06], ['pm_santa', 0.9 * 0.92], ['pf_dora,pm_alex', 0.9 * 0.96]]);
+});
+
+test('sonda do VoiceStudio: qualquer resposta conta como no ar, erro de rede não; guarda por um minuto', async () => {
+  let calls = 0;
+  let up = false;
+  let clock = 0;
+  const probe = createStudioProbe({ url: 'http://127.0.0.1:3900' }, (async () => {
+    calls++;
+    if (!up) throw new Error('ECONNREFUSED');
+    return new Response('not found', { status: 404 });
+  }) as typeof fetch, () => clock);
+  assert.equal(await probe(), false);
+  assert.equal(await probe(), false);
+  assert.equal(calls, 1, 'dentro de um minuto não sonda de novo');
+  up = true;
+  clock = 61_000;
+  assert.equal(await probe(), true);
+  assert.equal(calls, 2);
 });
