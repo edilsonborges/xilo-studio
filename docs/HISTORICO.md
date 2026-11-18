@@ -64,6 +64,7 @@ quem usa, veja o [CHANGELOG](../CHANGELOG.md).
 | 0.8.1 | #17 → #18 | voz inicial volta a funcionar onde não há VoiceStudio |
 | 0.8.2 | #19 → #20 | VoiceStudio em CPU pelo motor OmniVoice: duas qualidades, espera prevista, andamento e cancelamento |
 | 0.8.3 | #21 → #22 | Estilos Natural e Conto no VoiceStudio em CPU, como vozes clonadas por perfil de voz |
+| 0.8.4 | #23 → #24 | Sonda do VoiceStudio mais tolerante: 8 s de espera e nova tentativa em 10 s depois de uma falha |
 
 O registro de atividade do painel ficou fora das notas públicas da 0.5.0, a
 pedido.

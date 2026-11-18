@@ -110,7 +110,7 @@ compartilhe o link com um parâmetro, como `?v=2`.
 
 ## Narração com VoiceStudio
 
-O Xilo confere a cada minuto se o VoiceStudio responde em `VOICESTUDIO_URL` e qual motor ele tem (`GET /engines/tts`):
+O Xilo confere a cada minuto se o VoiceStudio responde em `VOICESTUDIO_URL` e qual motor ele tem (`GET /engines/tts`). A consulta espera até 8 s, e depois de uma falha é refeita em 10 s:
 
 | Situação do VoiceStudio | O que o Xilo oferece |
 |---|---|

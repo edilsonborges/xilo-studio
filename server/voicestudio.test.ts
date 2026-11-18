@@ -59,20 +59,27 @@ test('sonda do VoiceStudio: fora do ar, só com OmniVoice, com Kokoro; guarda po
 
   assert.deepEqual(await probe(), { up: false, kokoro: false });
   assert.deepEqual(await probe(), { up: false, kokoro: false });
-  assert.equal(calls, 1, 'dentro de um minuto não sonda de novo');
+  assert.equal(calls, 1, 'logo depois de uma falha não sonda de novo');
+  // uma falha vale só dez segundos
   reply = engines(false);
+  clock = 11_000;
+  assert.deepEqual(await probe(), { up: true, kokoro: false, clones: [] });
+  assert.equal(calls, 2);
   clock = 61_000;
+  assert.deepEqual(await probe(), { up: true, kokoro: false, clones: [] });
+  assert.equal(calls, 2, 'no ar, dentro de um minuto não sonda de novo');
+  clock = 71_500;
   // sem Kokoro, os estilos vêm dos perfis de voz; falha na lista vale como nenhum
   assert.deepEqual(await probe(), { up: true, kokoro: false, clones: [] });
   profiles = ['Demo Voice', 'Xilo Conto', 'Xilo Notícia', 'Xilo Natural'];
-  clock = 121_500;
+  clock = 132_000;
   assert.deepEqual(await probe(), { up: true, kokoro: false, clones: ['voicestudio-pt-br', 'voicestudio-conto'] });
   reply = engines(true);
-  clock = 182_000;
+  clock = 193_000;
   assert.deepEqual(await probe(), { up: true, kokoro: true });
   // respondeu sem a lista de motores: trata como a instalação antiga, com Kokoro
   reply = () => new Response('not found', { status: 404 });
-  clock = 243_000;
+  clock = 254_000;
   assert.deepEqual(await probe(), { up: true, kokoro: true });
 });
 
