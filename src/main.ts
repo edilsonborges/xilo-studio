@@ -18,11 +18,9 @@ import type { SceneGraphJSON, Timeline } from './types';
 import { formatTime } from './util';
 import { imagePrompt, storyboard, type IllustrationStyle } from './illustrated/director';
 import { IllustratedEngine } from './illustrated/engine';
+import { initStylePicker } from './stylepicker';
+import { DEFAULT_SECONDS, MAX_SECONDS, MIN_SECONDS, estimateSeconds, formatDuration, improveScript, joinSuggestion, sampleStory, splitSuggestion } from './writer';
 
-const SAMPLE_SCRIPT = `Na Bahia, nos anos 1930, um vaqueiro caminhava pela estrada de terra do sertão.
-O sol queimava a caatinga, e o mandacaru era a única sombra no caminho.
-Ao entardecer, ele chegou à vila e contou aos amigos sobre a longa viagem.
-Naquela noite, deitou na cama e dormiu, sonhando com a chuva que um dia voltaria.`;
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -33,6 +31,14 @@ const $ = <T extends HTMLElement>(id: string): T => {
 const ui = {
   script: $<HTMLTextAreaElement>('script'),
   useSample: $<HTMLButtonElement>('use-sample'),
+  improve: $<HTMLButtonElement>('improve'),
+  suggestion: $('suggestion'),
+  acceptSuggestion: $<HTMLButtonElement>('accept-suggestion'),
+  discardSuggestion: $<HTMLButtonElement>('discard-suggestion'),
+  duration: $<HTMLInputElement>('duration'),
+  durationLabel: $('duration-label'),
+  durationHint: $('duration-hint'),
+  styleButton: $<HTMLButtonElement>('style-button'),
   audio: $<HTMLInputElement>('audio'),
   dropzone: $<HTMLLabelElement>('dropzone'),
   audioName: $('audio-name'),
@@ -305,6 +311,7 @@ for (const select of [ui.ttsVoice, ui.ttsRate]) {
 ui.ttsGenerate.addEventListener('click', async () => {
   const script = ui.script.value.trim();
   clearStatus();
+  if (pendingSuggestion()) return;
   if (!script) {
     addStatus('Cole o roteiro antes de gerar a voz.', 'error');
     ui.script.focus();
@@ -331,10 +338,116 @@ ui.ttsGenerate.addEventListener('click', async () => {
 
 void setupVoices();
 
-ui.useSample.addEventListener('click', () => {
-  ui.script.value = SAMPLE_SCRIPT;
+// ---------- roteiro: exemplo, melhorar texto e duração ----------
+
+const targetSeconds = (): number => {
+  const value = Number(ui.duration.value);
+  return Number.isFinite(value) ? Math.min(MAX_SECONDS, Math.max(MIN_SECONDS, value)) : DEFAULT_SECONDS;
+};
+
+/** Com sugestão pendente na caixa, não dá para narrar nem gerar: avisa e devolve true. */
+function pendingSuggestion(): boolean {
+  if (!splitSuggestion(ui.script.value)) return false;
+  addStatus('Aceite ou descarte a sugestão de texto antes de continuar.', 'error');
+  ui.acceptSuggestion.focus();
+  return true;
+}
+
+function refreshScriptTools(): void {
+  const target = targetSeconds();
+  ui.durationLabel.textContent = formatDuration(target);
+  const parts = splitSuggestion(ui.script.value);
+  ui.suggestion.hidden = !parts;
+  const text = (parts?.original ?? ui.script.value).trim();
+  if (!text) {
+    ui.durationHint.textContent = 'O exemplo e o "Melhorar texto" escrevem um roteiro deste tamanho.';
+    ui.durationHint.classList.remove('warn');
+    return;
+  }
+  const estimate = estimateSeconds(text);
+  const off = Math.abs(estimate - target) > Math.max(5, target * 0.35);
+  ui.durationHint.classList.toggle('warn', off);
+  ui.durationHint.textContent = off
+    ? `O seu texto dá cerca de ${formatDuration(estimate)} de narração, ${estimate > target ? 'mais' : 'menos'} que a duração escolhida. "Melhorar texto" ajusta o tamanho.`
+    : `O seu texto dá cerca de ${formatDuration(estimate)} de narração.`;
+}
+
+ui.duration.value = settings.videoDuration;
+if (!ui.duration.value) ui.duration.value = String(DEFAULT_SECONDS);
+ui.duration.addEventListener('input', () => {
+  settings = { ...settings, videoDuration: String(targetSeconds()) };
+  saveSettings(settings);
+  refreshScriptTools();
+});
+ui.script.addEventListener('input', refreshScriptTools);
+
+let sampleTurn = Math.floor(Math.random() * 12);
+ui.useSample.addEventListener('click', async () => {
+  if (ui.useSample.disabled) return;
+  ui.useSample.disabled = true;
+  ui.useSample.textContent = 'Escrevendo…';
+  try {
+    const ai = await aiStatus();
+    const sample = await sampleStory(sampleTurn++, targetSeconds(), ai.text);
+    ui.script.value = sample.script;
+    clearStatus();
+    addStatus(sample.source === 'ai'
+      ? `Exemplo novo: ${sample.theme}. Clique de novo para outra história.`
+      : 'Exemplo pronto (a IA não respondeu agora). Clique de novo para outro.', sample.source === 'ai' ? 'ok' : 'warn');
+    logEvent('sample_story', 'ok', { tema: sample.theme, origem: sample.source === 'ai' ? 'IA do Xilo' : 'lista pronta', duração: formatDuration(targetSeconds()), roteiro: sample.script.slice(0, 1_500) });
+  } finally {
+    ui.useSample.disabled = false;
+    ui.useSample.textContent = 'Usar exemplo';
+    refreshScriptTools();
+    ui.script.focus();
+  }
+});
+
+ui.improve.addEventListener('click', async () => {
+  if (ui.improve.disabled) return;
+  // com sugestão pendente, melhora de novo a partir do texto original
+  const original = (splitSuggestion(ui.script.value)?.original ?? ui.script.value).trim();
+  clearStatus();
+  if (!original) {
+    addStatus('Escreva ou cole o roteiro antes de melhorar.', 'error');
+    ui.script.focus();
+    return;
+  }
+  ui.improve.disabled = true;
+  ui.improve.textContent = 'Melhorando…';
+  try {
+    const improved = await improveScript(original, targetSeconds());
+    ui.script.value = joinSuggestion(original, improved);
+    addStatus('Sugestão pronta, abaixo da linha tracejada. Aceite, descarte ou peça outra.', 'ok');
+    logEvent('script_improved', 'ok', { duração: formatDuration(targetSeconds()), roteiro: original.slice(0, 700), sugestão: improved.slice(0, 1_500) });
+  } catch (err) {
+    addStatus(`Não consegui melhorar o texto: ${(err as Error).message}`, 'error');
+  } finally {
+    ui.improve.disabled = false;
+    ui.improve.textContent = 'Melhorar texto';
+    refreshScriptTools();
+  }
+});
+
+ui.acceptSuggestion.addEventListener('click', () => {
+  const parts = splitSuggestion(ui.script.value);
+  if (parts) ui.script.value = parts.suggestion;
+  clearStatus();
+  refreshScriptTools();
   ui.script.focus();
 });
+
+ui.discardSuggestion.addEventListener('click', () => {
+  const parts = splitSuggestion(ui.script.value);
+  if (parts) ui.script.value = parts.original;
+  clearStatus();
+  refreshScriptTools();
+  ui.script.focus();
+});
+
+// sem a IA do servidor não há como melhorar o texto
+void aiStatus().then((ai) => { ui.improve.hidden = !ai.text; });
+refreshScriptTools();
 
 // ---------- geração ----------
 
@@ -349,6 +462,7 @@ function applyGraph(graph: SceneGraphJSON): void {
 async function generate(): Promise<void> {
   const script = ui.script.value.trim();
   clearStatus();
+  if (pendingSuggestion()) return;
   if (!script) {
     addStatus('Cole o roteiro antes de gerar.', 'error');
     ui.script.focus();
@@ -538,6 +652,7 @@ for (const category of STYLE_CATEGORIES) {
   ui.videoStyle.append(group);
 }
 ui.videoStyle.value = settings.videoStyle;
+initStylePicker(ui.videoStyle, ui.styleButton);
 ui.videoStyle.addEventListener('change', () => {
   settings = { ...settings, videoStyle: ui.videoStyle.value as Settings['videoStyle'] };
   saveSettings(settings);

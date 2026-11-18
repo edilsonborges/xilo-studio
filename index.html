@@ -46,7 +46,10 @@
           <div class="field">
             <div class="field-head">
               <label for="script">1. Roteiro</label>
-              <button class="link" id="use-sample" type="button">Usar exemplo</button>
+              <span class="field-actions">
+                <button class="link" id="use-sample" type="button" title="Cada clique escreve uma história diferente">Usar exemplo</button>
+                <button class="link" id="improve" type="button" title="Reescreve o seu texto, mais visual e no tamanho da duração escolhida">Melhorar texto</button>
+              </span>
             </div>
             <textarea
               id="script"
@@ -54,6 +57,17 @@
               placeholder="Cole aqui o texto exato da narração…"
               spellcheck="false"
             ></textarea>
+            <div class="suggestion" id="suggestion" hidden>
+              <span>A sugestão está abaixo da linha tracejada. O seu texto continua acima dela.</span>
+              <button class="btn btn-primary" id="accept-suggestion" type="button">Aceitar</button>
+              <button class="btn" id="discard-suggestion" type="button">Descartar</button>
+            </div>
+            <div class="duration">
+              <label for="duration">Duração do vídeo <output id="duration-label" for="duration">30 s</output></label>
+              <input id="duration" type="range" min="5" max="180" step="5" value="30" required />
+              <div class="duration-scale" aria-hidden="true"><span>5 s</span><span>1 min</span><span>2 min</span><span>3 min</span></div>
+              <p class="hint" id="duration-hint"></p>
+            </div>
           </div>
 
           <div class="field">
@@ -80,8 +94,9 @@
           </div>
 
           <div class="field">
-            <div class="field-head"><label for="video-style">3. Estilo do vídeo</label></div>
-            <select id="video-style">
+            <div class="field-head"><label for="style-button">3. Estilo do vídeo</label></div>
+            <button class="style-button" id="style-button" type="button" aria-haspopup="dialog"></button>
+            <select id="video-style" hidden aria-hidden="true" tabindex="-1">
               <optgroup label="Ilustrado por IA (uma imagem por cena)">
                 <option value="xilogravura">Xilogravura de cordel</option>
                 <option value="aquarela">Aquarela</option>

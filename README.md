@@ -7,6 +7,9 @@ O nome vem de **xilogravura**, a arte que ilustra a literatura de cordel:
 contornos pretos grossos e cores chapadas. É a estética que o motor produz
 (toon shader de 3 tons + contorno por casco invertido).
 
+> Documentação completa em [docs/](docs/README.md): arquitetura, operação, IA,
+> motor 3D e histórico. Novidades de cada versão no [CHANGELOG](CHANGELOG.md).
+
 ## O que é
 
 Uma aplicação web que roda 100% no navegador. Você entrega:
