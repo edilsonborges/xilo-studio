@@ -4,6 +4,14 @@ Todas as mudanças relevantes do Xilo Studio ficam registradas aqui. O formato
 segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões
 seguem o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.8.4] - 2026-11-18
+
+### Corrigido
+
+- As vozes do VoiceStudio às vezes sumiam da lista por um minuto, quando ele
+  demorava alguns segundos para responder. O Xilo agora espera mais e tenta
+  de novo logo em seguida.
+
 ## [0.8.3] - 2026-11-18
 
 ### Adicionado

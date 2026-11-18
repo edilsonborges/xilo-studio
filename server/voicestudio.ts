@@ -113,7 +113,8 @@ export interface StudioState {
 
 /**
  * Confere se o VoiceStudio está no ar e qual motor ele tem. Sem resposta, o
- * Xilo esconde essas vozes e usa o Edge TTS. O resultado vale por um minuto.
+ * Xilo esconde essas vozes e usa o Edge TTS. O resultado vale por um minuto;
+ * uma falha, por dez segundos.
  */
 export function createStudioProbe(config: VoiceStudioConfig, request = fetch, now: () => number = Date.now): () => Promise<StudioState> {
   let checkedAt = -Infinity;
@@ -123,7 +124,7 @@ export function createStudioProbe(config: VoiceStudioConfig, request = fetch, no
   /** Estilos cujo perfil de voz existe no VoiceStudio; qualquer falha vale como "nenhum". */
   const listClones = async (): Promise<string[]> => {
     try {
-      const response = await request(new URL('/profiles', config.url), { signal: AbortSignal.timeout(3_000), redirect: 'manual', headers });
+      const response = await request(new URL('/profiles', config.url), { signal: AbortSignal.timeout(8_000), redirect: 'manual', headers });
       if (!response.ok) {
         await response.body?.cancel();
         return [];
@@ -137,9 +138,10 @@ export function createStudioProbe(config: VoiceStudioConfig, request = fetch, no
     }
   };
   return () => {
-    if (now() - checkedAt < 60_000) return Promise.resolve(state);
+    // um "fora do ar" vale pouco: o backend em CPU às vezes só demora a responder
+    if (now() - checkedAt < (state.up ? 60_000 : 10_000)) return Promise.resolve(state);
     pending ??= request(new URL('/engines/tts', config.url), {
-      signal: AbortSignal.timeout(3_000),
+      signal: AbortSignal.timeout(8_000),
       redirect: 'manual',
       headers,
     })
