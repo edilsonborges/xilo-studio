@@ -110,7 +110,9 @@ compartilhe o link com um parâmetro, como `?v=2`.
 
 ## Narração com VoiceStudio
 
-No Mac Apple Silicon que atende o Xilo, inicie o backend do VoiceStudio e baixe o modelo Kokoro no catálogo de MLX-Audio. A voz inicial é a brasileira `pf_dora`. O Xilo acessa a API compatível com OpenAI em `/v1/audio/speech`. O Docker usa `http://host.docker.internal:3900` por padrão. Em desenvolvimento fora do Docker, o endereço é `http://127.0.0.1:3900`.
+O Xilo confere a cada minuto se o VoiceStudio responde em `VOICESTUDIO_URL`. Se não responder, esconde as vozes do VoiceStudio e usa o Edge TTS como voz inicial; quando ele voltar, as vozes reaparecem em até um minuto. Em 18/11/2026 não havia VoiceStudio rodando na porta 3900 do servidor de produção. Esse servidor é um Mac Intel; o VoiceStudio tem versão para Intel, mas ainda não foi conferido qual motor de voz funciona nele (o padrão do Xilo é o `mlx-audio`). Se for outro, ajuste `VOICESTUDIO_MODEL` e `VOICESTUDIO_VOICE`.
+
+No Mac que atende o Xilo, inicie o backend do VoiceStudio e baixe o modelo Kokoro no catálogo de MLX-Audio. A voz inicial é a brasileira `pf_dora`. O Xilo acessa a API compatível com OpenAI em `/v1/audio/speech`. O Docker usa `http://host.docker.internal:3900` por padrão. Em desenvolvimento fora do Docker, o endereço é `http://127.0.0.1:3900`.
 
 Se a instância usar outra porta ou exigir autenticação, configure `VOICESTUDIO_URL` e `VOICESTUDIO_API_KEY` no servidor Xilo. A chave corresponde à `OMNIVOICE_API_KEY` da instância. Os estilos Notícia, Conto e Documentário usam os perfis do Kokoro. Para trocar o motor ou o perfil do estilo Natural, ajuste `VOICESTUDIO_MODEL` e `VOICESTUDIO_VOICE`. O cliente consulta o andamento enquanto a síntese roda. Para os tempos das legendas, ele usa o alinhador selecionado nas configurações. As vozes Edge continuam fornecendo tempos por palavra.
 

@@ -4,6 +4,14 @@ Todas as mudanças relevantes do Xilo Studio ficam registradas aqui. O formato
 segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões
 seguem o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.8.1] - 2026-11-18
+
+### Corrigido
+
+- Onde o VoiceStudio não está disponível, gerar a narração com a voz inicial
+  falhava sempre. Agora o Xilo confere se o VoiceStudio está no ar: se não
+  estiver, mostra só as vozes do Edge e usa uma delas como voz inicial.
+
 ## [0.8.0] - 2026-11-18
 
 ### Adicionado

@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { loadConfig, validateConfig, type ServerConfig } from './config.js';
 import { createResendMailer, inviteEmail, resetEmail, type Mailer } from './mailer.js';
 import { createGateway, type AiOutcome, type Gateway } from './ai.js';
-import { createVoiceStudio, studioStyle, VOICESTUDIO_ID } from './voicestudio.js';
+import { createStudioProbe, createVoiceStudio, studioStyle, VOICESTUDIO_ID } from './voicestudio.js';
 import { VOICES, edgeNarrator, type Narration, type Narrator } from './narration.js';
 import { validPasswordInput } from './password.js';
 import { type EventStatus, AuthStore, AI_IMAGE_LIMIT, AI_TEXT_LIMIT, NARRATION_LIMIT, SESSION_TTL, invalidCredentials, type TokenPurpose, type User } from './store.js';
@@ -57,7 +57,8 @@ const aiImageSchema = z.object({ prompt: z.string().trim().min(1).max(4_000) }).
 const AI_JOB_TTL = 15 * 60_000;
 const narrationSchema = z.object({
   text: z.string().trim().min(1).max(MAX_NARRATION_CHARS),
-  voice: z.enum(VOICES.map((voice) => voice.id) as [string, ...string[]]).default(VOICESTUDIO_ID),
+  // sem voz no pedido, vale a inicial: VoiceStudio se estiver no ar, senão Edge TTS
+  voice: z.enum(VOICES.map((voice) => voice.id) as [string, ...string[]]).optional(),
   rate: z.number().min(0.5).max(2),
 }).strict();
 
@@ -100,6 +101,8 @@ export interface AppOptions {
   onBackgroundTask?: (task: Promise<void>) => void;
   /** Gera a narração; os testes trocam pelo falso. */
   narrator?: Narrator;
+  /** O VoiceStudio está no ar? Por padrão o servidor sonda; com narrador falso, vale "sim". */
+  studioAvailable?: () => Promise<boolean>;
   /** Cliente do opencode-gateway; null desliga a IA do servidor. */
   gateway?: Gateway | null;
 }
@@ -320,8 +323,14 @@ export function createApp(options: AppOptions = {}): express.Express {
     next();
   }
 
-  app.get('/api/narration/voices', requireUser, (_req, res) => {
-    res.json({ voices: VOICES, maxChars: MAX_NARRATION_CHARS });
+  const studioAvailable = options.studioAvailable
+    ?? (options.narrator ? () => Promise.resolve(true) : createStudioProbe(config.voiceStudio ?? { url: 'http://127.0.0.1:3900' }));
+  const EDGE_DEFAULT = 'pt-BR-AntonioNeural';
+
+  app.get('/api/narration/voices', requireUser, async (_req, res) => {
+    // onde o VoiceStudio não roda, as vozes dele nem aparecem
+    const studioUp = await studioAvailable();
+    res.json({ voices: studioUp ? VOICES : VOICES.filter((voice) => !studioStyle(voice.id)), maxChars: MAX_NARRATION_CHARS, voiceStudio: studioUp });
   });
 
   app.post('/api/narration', requireUser, async (req, res) => {
@@ -334,7 +343,13 @@ export function createApp(options: AppOptions = {}): express.Express {
       return;
     }
     const user = res.locals.user as User;
-    const isStudio = Boolean(studioStyle(parsed.data.voice));
+    const studioUp = await studioAvailable();
+    const voice = parsed.data.voice ?? (studioUp ? VOICESTUDIO_ID : EDGE_DEFAULT);
+    const isStudio = Boolean(studioStyle(voice));
+    if (isStudio && !studioUp) {
+      res.status(503).json({ error: 'O VoiceStudio não está disponível neste servidor. Escolha uma voz do Edge TTS.' });
+      return;
+    }
     if (isStudio && (voiceJobs.size >= 8 || [...voiceJobs.values()].some(job => job.owner === user.id && !job.result && !job.failed))) {
       res.status(429).json({ error: 'Há narrações em andamento. Aguarde e tente novamente.' });
       return;
@@ -348,10 +363,10 @@ export function createApp(options: AppOptions = {}): express.Express {
     const generate = async () => {
       const result = await narrator({
         text: parsed.data.text,
-        voice: parsed.data.voice as (typeof VOICES)[number]['id'],
+        voice: voice as (typeof VOICES)[number]['id'],
         rate: parsed.data.rate,
       });
-      audit(user, 'narration', 'ok', { voz: parsed.data.voice, velocidade: parsed.data.rate, caracteres: parsed.data.text.length, roteiro: parsed.data.text.slice(0, 1_500) });
+      audit(user, 'narration', 'ok', { voz: voice, velocidade: parsed.data.rate, caracteres: parsed.data.text.length, roteiro: parsed.data.text.slice(0, 1_500) });
       return result;
     };
     if (isStudio) {
@@ -360,7 +375,7 @@ export function createApp(options: AppOptions = {}): express.Express {
       voiceJobs.set(id, job);
       void generate().then(result => { job.result = result; }, () => {
         job.failed = true;
-        audit(user, 'narration', 'fail', { voz: parsed.data.voice });
+        audit(user, 'narration', 'fail', { voz: voice });
       }).finally(() => setTimeout(() => voiceJobs.delete(id), 60_000).unref());
       res.status(202).json({ jobId: id });
       return;
@@ -369,7 +384,7 @@ export function createApp(options: AppOptions = {}): express.Express {
       const { audio, words } = await generate();
       res.json({ audio: audio.toString('base64'), mimeType: 'audio/mpeg', words });
     } catch (error) {
-      audit(user, 'narration', 'fail', { voz: parsed.data.voice, erro: error instanceof Error ? error.message.slice(0, 200) : 'erro desconhecido' });
+      audit(user, 'narration', 'fail', { voz: voice, erro: error instanceof Error ? error.message.slice(0, 200) : 'erro desconhecido' });
       console.error(`Falha no Edge TTS: ${error instanceof Error ? error.message : 'erro desconhecido'}`);
       res.status(502).json({ error: 'O Edge TTS não respondeu. Tente de novo em instantes ou envie um áudio seu.' });
     }
