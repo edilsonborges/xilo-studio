@@ -36,3 +36,8 @@ export async function logout(): Promise<void> {
   await api('/api/auth/logout', 'POST');
   location.replace('/login');
 }
+
+/** Registra no servidor algo que só o navegador sabe (vídeo gerado, exportado). Nunca atrapalha o app. */
+export function logEvent(kind: string, status: 'ok' | 'fail', detail: Record<string, string | number | boolean | null>): void {
+  void api('/api/events', 'POST', { kind, status, detail }).catch(() => undefined);
+}

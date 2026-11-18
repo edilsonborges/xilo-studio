@@ -12,7 +12,7 @@ RUN npm ci
 
 # Build: site estático do Vite (com manifesto) + checagem de tipos do servidor
 FROM dependencies AS build
-COPY tsconfig.json tsconfig.server.json vite.config.ts index.html login.html admin.html ./
+COPY tsconfig.json tsconfig.server.json vite.config.ts index.html login.html admin.html CHANGELOG.md ./
 COPY src ./src
 COPY public ./public
 COPY server ./server

@@ -147,3 +147,67 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Atividade (painel do administrador) */
+
+.admin-filters {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.admin-filters select {
+  width: auto;
+  min-width: 180px;
+}
+
+.admin-table td.num,
+.admin-table th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-table td.when {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.admin-table td.detail {
+  min-width: 260px;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+
+.admin-table td.detail b {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.admin-table td.detail .script {
+  display: block;
+  margin-top: 4px;
+  max-height: 4.4em;
+  overflow: hidden;
+  color: var(--ink);
+}
+
+.admin-table td.detail .script.open {
+  max-height: none;
+}
+
+.tag-ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.tag-fail {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.admin-more {
+  justify-self: center;
+}

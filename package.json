@@ -1,6 +1,6 @@
 {
   "name": "xilo-studio",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "Roteiro + narração → vídeo vertical 3D low-poly com cel-shading, legendas karaokê e exportação automática. Three.js + LLM.",
   "license": "MIT",
@@ -12,7 +12,7 @@
     "start": "node --import tsx server/index.ts",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json",
-    "test": "tsx --test server/*.test.ts src/**/*.test.ts",
+    "test": "tsx --test server/*.test.ts src/*.test.ts src/**/*.test.ts",
     "check": "npm run test && npm run build",
     "narrar": "node scripts/narrar.mjs"
   },

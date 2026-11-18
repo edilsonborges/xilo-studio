@@ -11,3 +11,4 @@ server/*.test.ts
 !vite.config.ts
 !src
 !public
+!CHANGELOG.md

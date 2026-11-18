@@ -2,7 +2,9 @@ import './style.css';
 
 import { createTimeline, decodeAudioFile } from './audio';
 import { listVoices, narrate, type GeneratedNarration } from './audio/edge';
+import { logEvent } from './auth/api';
 import { initSession } from './auth/session';
+import { initVersionModal } from './version';
 import { aiImage, aiStatus } from './ai/client';
 import { Compositor, type FrameSource } from './compositor/compositor';
 import { directScenes } from './director';
@@ -406,8 +408,18 @@ async function generate(): Promise<void> {
     applyGraph(directed.graph);
     ui.jsonDetails.hidden = false;
     showPreview(comp, file, buffer);
+    logEvent('video_generated', 'ok', {
+      roteiro: script.slice(0, 1_500),
+      estilo: ui.videoStyle.selectedOptions[0]?.textContent ?? settings.videoStyle,
+      cenas: directed.graph.scenes.length,
+      direção: origin,
+      duração: `${buffer.duration.toFixed(1)} s`,
+      áudio: narrated?.file === file ? 'voz gerada' : 'áudio enviado',
+      ...(directed.warning ? { aviso: directed.warning.slice(0, 300) } : {}),
+    });
     finishGeneration();
   } catch (err) {
+    logEvent('generation_failed', 'fail', { roteiro: script.slice(0, 1_500), estilo: settings.videoStyle, erro: ((err as Error).message || 'falha').slice(0, 300) });
     addStatus((err as Error).message || 'Falha ao gerar o vídeo.', 'error');
   } finally {
     busy = false;
@@ -493,6 +505,15 @@ async function generateIllustrated(
   }
   if (failures) addStatus(`${failures} cena(s) ficaram sem imagem. Gere de novo para tentar outra vez.`, 'warn');
   player.currentTime = 0;
+  logEvent('video_generated', failures ? 'fail' : 'ok', {
+    roteiro: script.slice(0, 1_500),
+    estilo: `${ui.videoStyle.selectedOptions[0]?.textContent ?? style} (ilustrado por IA)`,
+    cenas: board.scenes.length,
+    imagens: drawn,
+    semImagem: failures,
+    direção: board.source === 'ai' ? 'IA do Xilo' : 'texto do roteiro',
+    duração: `${buffer.duration.toFixed(1)} s`,
+  });
   finishGeneration();
   return true;
 }
@@ -574,10 +595,17 @@ async function runExport(): Promise<void> {
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
     step.className = 'ok';
     step.textContent = `Vídeo exportado: ${link.download} (${(result.blob.size / 1048576).toFixed(1)} MB, 1080x1920).`;
+    logEvent('video_exported', 'ok', {
+      arquivo: link.download,
+      tamanho: `${(result.blob.size / 1048576).toFixed(1)} MB`,
+      duração: `${project.buffer.duration.toFixed(1)} s`,
+      estilo: ui.videoStyle.selectedOptions[0]?.textContent ?? settings.videoStyle,
+    });
   } catch (err) {
     const aborted = (err as Error).name === 'AbortError';
     step.className = aborted ? 'warn' : 'error';
     step.textContent = aborted ? 'Exportação cancelada.' : `Falha na exportação: ${(err as Error).message}`;
+    logEvent('export_failed', 'fail', { erro: aborted ? 'cancelada' : (err as Error).message.slice(0, 300) });
   } finally {
     exporting = null;
     dirty = true;
@@ -643,3 +671,4 @@ if (import.meta.env.DEV) {
 }
 
 void initSession();
+initVersionModal();
