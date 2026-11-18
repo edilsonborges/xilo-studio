@@ -462,7 +462,7 @@ test('sem VoiceStudio no servidor: as vozes dele somem e a voz inicial é a do E
 });
 
 /** App com o VoiceStudio em modo OmniVoice (sem Kokoro), como no servidor de produção. */
-function omniSetup(t: TestContext, narrator: (request: NarrationRequest) => Promise<{ audio: Buffer; words: [] }>) {
+function omniSetup(t: TestContext, narrator: (request: NarrationRequest) => Promise<{ audio: Buffer; words: [] }>, clones: string[] = []) {
   const dir = mkdtempSync(join(tmpdir(), 'xilo-test-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeDist(join(dir, 'dist'));
@@ -476,7 +476,7 @@ function omniSetup(t: TestContext, narrator: (request: NarrationRequest) => Prom
     mailer: async (message) => { sent.push(message); },
     onBackgroundTask: (task) => pending.push(task),
     narrator,
-    studioAvailable: async () => ({ up: true, kokoro: false }),
+    studioAvailable: async () => ({ up: true, kokoro: false, clones }),
   });
   t.after(() => app.locals.close());
   return { app, login: () => adminAgent(app, sent, () => Promise.all(pending.splice(0))) };
@@ -544,4 +544,31 @@ test('OmniVoice: andamento real, uma narração por vez, e cancelar só libera a
   releases[1]();
   await new Promise((resolve) => setImmediate(resolve));
   await admin.get(`/api/narration/jobs/${again.body.jobId}`).expect(200);
+});
+
+test('OmniVoice com perfis de voz: Natural e Conto voltam como vozes clonadas, com espera maior', async (t) => {
+  const seen: NarrationRequest[] = [];
+  let release: (() => void) | undefined;
+  const { login } = omniSetup(t, (request) => new Promise((resolve) => {
+    seen.push(request);
+    release = () => resolve({ audio: Buffer.from('x'), words: [] });
+  }), ['voicestudio-pt-br', 'voicestudio-conto']);
+  const admin = await login();
+  const voices = await admin.get('/api/narration/voices').expect(200);
+  assert.deepEqual(voices.body.voices.map((v: { id: string }) => v.id).slice(3), ['voicestudio-omnivoice', 'voicestudio-pt-br', 'voicestudio-conto']);
+  assert.equal(voices.body.defaultVoice, 'pt-BR-AntonioNeural');
+  assert.deepEqual(voices.body.studio.voices, { 'voicestudio-omnivoice': 1, 'voicestudio-pt-br': 2.5, 'voicestudio-conto': 2.5 });
+  // estilo sem perfil continua indisponível
+  await admin.post('/api/narration').set('Origin', ORIGIN).send({ text: 'Olá.', voice: 'voicestudio-noticia', rate: 1 }).expect(503);
+  // estilo clonado: tarefa com qualidade, e ocupa a mesma vaga única do OmniVoice
+  const text = Array.from({ length: 46 }, () => 'palavra').join(' '); // 20 s de áudio
+  const started = await admin.post('/api/narration').set('Origin', ORIGIN).send({ text, voice: 'voicestudio-conto', rate: 1 }).expect(202);
+  assert.equal(seen[0].voice, 'voicestudio-conto');
+  assert.equal(seen[0].quality, 'fast');
+  const busy = await admin.post('/api/narration').set('Origin', ORIGIN).send({ text: 'Outra.', voice: 'voicestudio-omnivoice', rate: 1 }).expect(429);
+  // 20 s de áudio × 11 × 2,5 = 550 s: a previsão já conta a voz clonada
+  assert.match(busy.body.error, /livre em cerca de 9 min/);
+  release!();
+  await new Promise((resolve) => setImmediate(resolve));
+  await admin.get(`/api/narration/jobs/${started.body.jobId}`).expect(200);
 });

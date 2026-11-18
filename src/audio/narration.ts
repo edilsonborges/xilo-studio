@@ -24,7 +24,7 @@ export interface VoiceList {
   /** voz inicial sugerida pelo servidor */
   defaultVoice?: string;
   /** presente quando o VoiceStudio do servidor é o OmniVoice, que é lento e tem duas qualidades */
-  studio?: { voice: string; qualities: StudioQuality[] } | null;
+  studio?: { voice: string; voices?: Record<string, number>; qualities: StudioQuality[] } | null;
 }
 
 /** Andamento da narração: segundos de áudio prontos, total previsto e tempo decorrido. */

@@ -63,6 +63,7 @@ quem usa, veja o [CHANGELOG](../CHANGELOG.md).
 | 0.8.0 | → #16 | VoiceStudio, player e histórico de narração, estilos de legenda, colisões no 3D (feita por outra sessão) |
 | 0.8.1 | #17 → #18 | voz inicial volta a funcionar onde não há VoiceStudio |
 | 0.8.2 | #19 → #20 | VoiceStudio em CPU pelo motor OmniVoice: duas qualidades, espera prevista, andamento e cancelamento |
+| 0.8.3 | #21 → #22 | Estilos Natural e Conto no VoiceStudio em CPU, como vozes clonadas por perfil de voz |
 
 O registro de atividade do painel ficou fora das notas públicas da 0.5.0, a
 pedido.
@@ -76,6 +77,8 @@ pedido.
 - O repositório é público: o código do registro de atividade fica visível.
 
 ## Lições desta implantação
+
+- O `fetch` do Node tem um limite próprio de cinco minutos sem resposta, independente do `AbortSignal` passado. Com o VoiceStudio em CPU, a primeira frase de uma voz clonada na qualidade Máxima passou disso (319 s), e a narração falhava. Só o teste com o serviço real mostrou.
 
 - Compatibilidade se confere na documentação e no próprio programa, não por dedução. O VoiceStudio tem versão para Mac Intel, mas só da interface; o que não roda em Intel é o motor local. A afirmação errada de que "só roda em Apple Silicon" chegou a entrar numa issue antes de ser corrigida.
 - Cancelar um pedido não garante que o serviço do outro lado pare. O VoiceStudio continuou gerando por mais de 100 s depois de um pedido abandonado; o teste real mostrou isso, os testes com serviço falso não.
