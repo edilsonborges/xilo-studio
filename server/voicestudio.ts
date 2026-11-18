@@ -72,29 +72,109 @@ function wav(chunks: Buffer[]): Buffer {
   return Buffer.concat([header, ...chunks]);
 }
 
+/** Voz do VoiceStudio quando o backend só tem o motor OmniVoice (ex.: Docker em CPU). */
+export const OMNIVOICE_ID = 'voicestudio-omnivoice';
+
 /**
- * Onde o VoiceStudio não está rodando, o Xilo esconde essas vozes e usa o
- * Edge TTS. Qualquer resposta HTTP conta como "no
- * ar"; o resultado vale por um minuto para não sondar a cada pedido.
+ * Qualidades do OmniVoice. `ratio` é quantos segundos de processamento cada
+ * segundo de áudio custa numa CPU sem GPU (medido no servidor de produção);
+ * serve só para a estimativa inicial, que depois é corrigida pelo andamento real.
  */
-export function createStudioProbe(config: VoiceStudioConfig, request = fetch, now: () => number = Date.now): () => Promise<boolean> {
+export const STUDIO_QUALITIES = [
+  { id: 'fast', label: 'Rápida', steps: 8, ratio: 11 },
+  { id: 'best', label: 'Máxima', steps: 16, ratio: 25 },
+] as const;
+export type StudioQuality = (typeof STUDIO_QUALITIES)[number]['id'];
+
+export interface StudioState {
+  /** o VoiceStudio respondeu */
+  up: boolean;
+  /** tem o motor mlx-audio (Kokoro): valem os quatro estilos da 0.8.0 */
+  kokoro: boolean;
+}
+
+/**
+ * Confere se o VoiceStudio está no ar e qual motor ele tem. Sem resposta, o
+ * Xilo esconde essas vozes e usa o Edge TTS. O resultado vale por um minuto.
+ */
+export function createStudioProbe(config: VoiceStudioConfig, request = fetch, now: () => number = Date.now): () => Promise<StudioState> {
   let checkedAt = -Infinity;
-  let available = false;
-  let pending: Promise<boolean> | null = null;
+  let state: StudioState = { up: false, kokoro: false };
+  let pending: Promise<StudioState> | null = null;
   return () => {
-    if (now() - checkedAt < 60_000) return Promise.resolve(available);
-    pending ??= request(new URL('/', config.url), { signal: AbortSignal.timeout(2_000), redirect: 'manual' })
-      .then(async (response) => {
-        await response.body?.cancel();
-        return true;
-      }, () => false)
+    if (now() - checkedAt < 60_000) return Promise.resolve(state);
+    pending ??= request(new URL('/engines/tts', config.url), {
+      signal: AbortSignal.timeout(3_000),
+      redirect: 'manual',
+      headers: config.key ? { Authorization: `Bearer ${config.key}` } : {},
+    })
+      .then(async (response): Promise<StudioState> => {
+        // respondeu, mas não deu a lista de motores: trata como a instalação da 0.8.0
+        if (!response.ok) {
+          await response.body?.cancel();
+          return { up: true, kokoro: true };
+        }
+        const body = await response.json().catch(() => null) as { backends?: Array<{ id?: string; available?: boolean }> } | null;
+        if (!Array.isArray(body?.backends)) return { up: true, kokoro: true };
+        return { up: true, kokoro: body.backends.some((engine) => engine.id === 'mlx-audio' && engine.available === true) };
+      }, (): StudioState => ({ up: false, kokoro: false }))
       .then((result) => {
-        available = result;
+        state = result;
         checkedAt = now();
         pending = null;
         return result;
       });
     return pending;
+  };
+}
+
+/** Segundos de áudio que um texto deve render, para a estimativa de espera. */
+export const estimateAudioSeconds = (text: string, rate: number): number =>
+  Math.max(1, text.trim().split(/\s+/).filter(Boolean).length / 2.3 / rate);
+
+/**
+ * Narração pelo motor OmniVoice. Um pedido só, para a voz não mudar no meio; o
+ * áudio chega aos poucos (frase a frase), o que dá o andamento real.
+ * O backend não interrompe uma fala já começada: abandonar o pedido não libera
+ * o processador, então quem chama deve esperar o fim mesmo ao cancelar.
+ */
+export function createOmniVoice(config: VoiceStudioConfig, request = fetch): Narrator {
+  return async ({ text, rate, quality, onProgress, signal }) => {
+    const steps = STUDIO_QUALITIES.find((q) => q.id === quality)?.steps ?? STUDIO_QUALITIES[0].steps;
+    const limit = AbortSignal.timeout(45 * 60_000);
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    // a API aceita até 4096 caracteres por pedido; a mesma semente mantém a voz entre os pedidos
+    const seed = Math.floor(Math.random() * 1_000_000);
+    const parts = [...splitScript(text, 3800)];
+    for (const input of parts) {
+      const response = await request(new URL('/v1/audio/speech', config.url), {
+        method: 'POST',
+        redirect: 'error',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(config.key ? { Authorization: `Bearer ${config.key}` } : {}),
+        },
+        body: JSON.stringify({
+          input, model: 'omnivoice', language: 'pt-BR', speed: rate,
+          response_format: 'pcm', stream_format: 'audio', num_step: steps,
+          ...(parts.length > 1 ? { seed } : {}),
+        }),
+        signal: signal ? AbortSignal.any([signal, limit]) : limit,
+      });
+      if (!response.ok || response.headers.get('content-type')?.split(';')[0] !== 'audio/pcm' || !response.body) {
+        await response.body?.cancel();
+        throw new Error(`Resposta inválida do VoiceStudio (HTTP ${response.status}).`);
+      }
+      for await (const piece of response.body as unknown as AsyncIterable<Uint8Array>) {
+        chunks.push(Buffer.from(piece));
+        bytes += piece.length;
+        // PCM mono, 16 bits, 24 kHz: 48.000 bytes por segundo
+        onProgress?.(bytes / 48_000);
+      }
+    }
+    if (!bytes || bytes % 2) throw new Error('Áudio PCM incompleto.');
+    return { audio: wav(chunks), mimeType: 'audio/wav', words: [] };
   };
 }
 

@@ -110,7 +110,35 @@ compartilhe o link com um parâmetro, como `?v=2`.
 
 ## Narração com VoiceStudio
 
-O Xilo confere a cada minuto se o VoiceStudio responde em `VOICESTUDIO_URL`. Se não responder, esconde as vozes do VoiceStudio e usa o Edge TTS como voz inicial; quando ele voltar, as vozes reaparecem em até um minuto. Em 18/11/2026 não havia VoiceStudio rodando na porta 3900 do servidor de produção. Esse servidor é um Mac Intel; o VoiceStudio tem versão para Intel, mas ainda não foi conferido qual motor de voz funciona nele (o padrão do Xilo é o `mlx-audio`). Se for outro, ajuste `VOICESTUDIO_MODEL` e `VOICESTUDIO_VOICE`.
+O Xilo confere a cada minuto se o VoiceStudio responde em `VOICESTUDIO_URL` e qual motor ele tem (`GET /engines/tts`):
+
+| Situação do VoiceStudio | O que o Xilo oferece |
+|---|---|
+| Fora do ar | só as vozes do Edge TTS |
+| No ar, com o motor `mlx-audio` (Kokoro) | os quatro estilos da 0.8.0, e o VoiceStudio é a voz inicial |
+| No ar, só com o motor `omnivoice` | as vozes do Edge (inicial) e uma voz "VoiceStudio · OmniVoice", com as qualidades Rápida (8 passos) e Máxima (16 passos) |
+
+### VoiceStudio no servidor de produção (Docker, só CPU)
+
+O servidor de produção é um Mac Intel com macOS 12. O aplicativo do VoiceStudio para Intel é só a interface e pede macOS 13.3; o motor local não é suportado em Mac Intel. Por isso o backend roda em Docker:
+
+```bash
+docker run -d --name omnivoice --restart unless-stopped --memory=6g --cpus=6 \
+  -p 127.0.0.1:3900:3900 \
+  -e OMNIVOICE_API_KEY="$(cat ~/.voicestudio/api-key)" \
+  -e OMNIVOICE_DATA_DIR=/app/omnivoice_data \
+  -e OMNIVOICE_ANALYTICS_DISABLED=1 \
+  -v omnivoice-data:/app/omnivoice_data \
+  ghcr.io/debpalash/voicestudio:stable
+```
+
+- A chave fica em `~/.voicestudio/api-key` e vai no `.env` do Xilo como `VOICESTUDIO_API_KEY`.
+- Modelos, licenças aceitas e configurações ficam no volume `omnivoice-data`. Não apague.
+- O único motor em português disponível nessa imagem é o OmniVoice, com licença de uso não comercial (CC-BY-NC), aceita em 18/11/2026. O `mlx-audio` não roda fora de Apple Silicon, e o Supertonic-3 só instala pelo aplicativo de desktop.
+- Velocidade medida nesse servidor: cerca de 11 segundos de espera por segundo de áudio na qualidade Rápida e 25 na Máxima. Uma narração de 30 s leva uns 5 ou 12 minutos.
+- O backend não interrompe uma fala já começada. O Xilo deixa uma narração por vez e, ao cancelar, só libera a vaga quando o backend termina.
+- A imagem tem 11,5 GB e os modelos somam cerca de 6 GB. Confira o espaço do disco do Docker antes de atualizar (`docker system df`).
+- A interface do VoiceStudio fica em http://127.0.0.1:3900 (Model Catalogue, licenças, verificação do sistema).
 
 No Mac que atende o Xilo, inicie o backend do VoiceStudio e baixe o modelo Kokoro no catálogo de MLX-Audio. A voz inicial é a brasileira `pf_dora`. O Xilo acessa a API compatível com OpenAI em `/v1/audio/speech`. O Docker usa `http://host.docker.internal:3900` por padrão. Em desenvolvimento fora do Docker, o endereço é `http://127.0.0.1:3900`.
 

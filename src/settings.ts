@@ -30,6 +30,8 @@ export interface Settings {
   /** voz e velocidade da narração gerada pelo Edge TTS */
   ttsVoice: string;
   ttsRate: string;
+  /** qualidade do VoiceStudio quando ele é lento: rápida ou máxima */
+  ttsQuality: string;
   narrationReplacement: 'ask' | 'replace';
   /** ilustrado por IA (um dos estilos) ou o 3D de cordel */
   videoStyle: VideoStyle;
@@ -54,7 +56,9 @@ export const DEFAULT_SETTINGS: Settings = {
   anthropicModel: env.VITE_ANTHROPIC_MODEL || 'claude-opus-5-5',
   captionAccent: '#d8432b',
   captionStyle: 'pill',
-  ttsVoice: 'voicestudio-pt-br',
+  // vazio: vale a voz inicial que o servidor indicar
+  ttsVoice: '',
+  ttsQuality: 'fast',
   ttsRate: '1',
   narrationReplacement: 'ask',
   videoStyle: 'xilogravura',

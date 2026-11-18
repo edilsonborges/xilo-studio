@@ -1,6 +1,6 @@
 {
   "name": "xilo-studio",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "private": true,
   "description": "Roteiro + narração → vídeo vertical 3D low-poly com cel-shading, legendas karaokê e exportação automática. Three.js + LLM.",
   "license": "MIT",

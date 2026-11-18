@@ -3,7 +3,7 @@ import './style.css';
 import { createTimeline, decodeAudioFile } from './audio';
 import { appendTake, HISTORY_LIMIT, openNarrationHistory, type NarrationTake } from './audio/history';
 import { initNarrationPlayer } from './audio/player';
-import { listVoices, narrate } from './audio/narration';
+import { describeProgress, listVoices, narrate, type StudioQuality } from './audio/narration';
 import { logEvent } from './auth/api';
 import { initSession } from './auth/session';
 import { initVersionModal } from './version';
@@ -402,7 +402,8 @@ async function setupVoices(): Promise<void> {
   if (!ui.ttsRate.value) ui.ttsRate.value = '1';
   refreshRatePicker();
   try {
-    const { voices } = await listVoices();
+    const { voices, defaultVoice, studio } = await listVoices();
+    studioSlow = studio ?? null;
     const groups = new Map<string, HTMLOptGroupElement>();
     for (const voice of voices) {
       const provider = voice.id.startsWith('voicestudio-') ? 'VoiceStudio' : 'Edge TTS';
@@ -417,9 +418,13 @@ async function setupVoices(): Promise<void> {
       group.append(option);
     }
     ui.ttsVoice.replaceChildren(...groups.values());
+    // sem escolha salva (ou com uma voz que este servidor não tem), vale a inicial do servidor
     ui.ttsVoice.value = settings.ttsVoice;
+    if (!ui.ttsVoice.value && defaultVoice) ui.ttsVoice.value = defaultVoice;
     if (!ui.ttsVoice.value && voices[0]) ui.ttsVoice.value = voices[0].id;
     refreshVoicePicker();
+    buildStudioQualities();
+    refreshStudioOptions();
     showPlayback(!downloadUrl);
   } catch {
     // Sem servidor (ex.: `npm run dev:web`): some a opção de gerar a voz.
@@ -428,8 +433,58 @@ async function setupVoices(): Promise<void> {
   }
 }
 
+// ---------- VoiceStudio lento: qualidade e espera prevista ----------
+
+/** Preenchido quando o VoiceStudio do servidor é o OmniVoice em CPU. */
+let studioSlow: { voice: string; qualities: StudioQuality[] } | null = null;
+let narrationAbort: AbortController | null = null;
+
+const usingSlowStudio = (): boolean => studioSlow !== null && ui.ttsVoice.value === studioSlow.voice;
+const chosenQuality = (): StudioQuality | undefined =>
+  studioSlow?.qualities.find((q) => q.id === settings.ttsQuality) ?? studioSlow?.qualities[0];
+
+function buildStudioQualities(): void {
+  const box = $('studio-qualities');
+  box.replaceChildren(...(studioSlow?.qualities ?? []).map((quality) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'studio-quality';
+    button.setAttribute('role', 'radio');
+    button.dataset.quality = quality.id;
+    button.append(Object.assign(document.createElement('strong'), { textContent: quality.label }), document.createElement('small'));
+    button.addEventListener('click', () => {
+      settings = { ...settings, ttsQuality: quality.id };
+      saveSettings(settings);
+      refreshStudioOptions();
+    });
+    return button;
+  }));
+}
+
+/** Mostra a escolha de qualidade só com a voz lenta, com a espera prevista para o roteiro atual. */
+function refreshStudioOptions(): void {
+  const show = usingSlowStudio();
+  $('studio-options').hidden = !show;
+  if (!show || !studioSlow) return;
+  const text = (splitSuggestion(ui.script.value)?.original ?? ui.script.value).trim();
+  const audio = text ? estimateSeconds(text) / (Number(ui.ttsRate.value) || 1) : targetSeconds();
+  const current = chosenQuality();
+  for (const button of $('studio-qualities').querySelectorAll<HTMLButtonElement>('.studio-quality')) {
+    const quality = studioSlow.qualities.find((q) => q.id === button.dataset.quality)!;
+    button.setAttribute('aria-checked', String(quality.id === current?.id));
+    button.disabled = narrating;
+    button.querySelector('small')!.textContent = `espera de cerca de ${formatDuration(audio * quality.ratio)}`;
+  }
+  $('studio-note').textContent = text
+    ? `Neste servidor o VoiceStudio roda sem placa de vídeo e demora. Para este roteiro (cerca de ${formatDuration(audio)} de áudio):`
+    : 'Neste servidor o VoiceStudio roda sem placa de vídeo e demora. Escolha a qualidade:';
+}
+
+$('narration-cancel').addEventListener('click', () => narrationAbort?.abort());
+
 for (const select of [ui.ttsVoice, ui.ttsRate]) {
   select.addEventListener('change', () => {
+    refreshStudioOptions();
     settings = { ...settings, ttsVoice: ui.ttsVoice.value, ttsRate: ui.ttsRate.value };
     showPlayback(true);
     saveSettings(settings);
@@ -472,7 +527,25 @@ ui.ttsGenerate.addEventListener('click', async () => {
     let replace = await authorizeReplacement(history ? await history.read() : takes);
     if (replace === false) return;
     step = addStatus('Gerando a narração…');
-    const result = await narrate(script, voice, rate);
+    const slow = usingSlowStudio();
+    const quality = slow ? chosenQuality() : undefined;
+    const progressBox = $('narration-progress');
+    if (slow) {
+      narrationAbort = new AbortController();
+      $('narration-bar').style.width = '2%';
+      $('narration-eta').textContent = `Enviando ao VoiceStudio… espera prevista de cerca de ${formatDuration((estimateSeconds(script) / rate) * (quality?.ratio ?? 11))}.`;
+      progressBox.hidden = false;
+      refreshStudioOptions();
+    }
+    const result = await narrate(script, voice, rate, slow ? {
+      quality: quality?.id,
+      signal: narrationAbort?.signal,
+      onProgress: (progress) => {
+        const view = describeProgress(progress, quality?.ratio ?? 11, formatDuration);
+        $('narration-bar').style.width = `${(view.fraction * 100).toFixed(1)}%`;
+        $('narration-eta').textContent = view.text;
+      },
+    } : {});
     const buffer = await decodeAudioFile(result.file);
     const input = { ...result, id: crypto.randomUUID(), script, voiceLabel, rate, duration: buffer.duration };
     for (;;) {
@@ -493,11 +566,15 @@ ui.ttsGenerate.addEventListener('click', async () => {
     }
   } catch (err) {
     if (!step) step = addStatus('');
-    step.className = 'error';
+    const cancelled = (err as Error).name === 'AbortError';
+    step.className = cancelled ? 'warn' : 'error';
     step.textContent = (err as Error).message;
   } finally {
     narrating = false;
+    narrationAbort = null;
+    $('narration-progress').hidden = true;
     refreshControls();
+    refreshStudioOptions();
   }
 });
 
@@ -562,6 +639,7 @@ ui.duration.addEventListener('input', () => {
   refreshScriptTools();
 });
 ui.script.addEventListener('input', refreshScriptTools);
+ui.script.addEventListener('input', () => refreshStudioOptions());
 
 let sampleTurn = Math.floor(Math.random() * 12);
 ui.useSample.addEventListener('click', async () => {

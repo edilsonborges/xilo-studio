@@ -5,7 +5,10 @@ import { z } from 'zod';
 import { loadConfig, validateConfig, type ServerConfig } from './config.js';
 import { createResendMailer, inviteEmail, resetEmail, type Mailer } from './mailer.js';
 import { createGateway, type AiOutcome, type Gateway } from './ai.js';
-import { createStudioProbe, createVoiceStudio, studioStyle, VOICESTUDIO_ID } from './voicestudio.js';
+import {
+  createOmniVoice, createStudioProbe, createVoiceStudio, estimateAudioSeconds, studioStyle,
+  OMNIVOICE_ID, STUDIO_QUALITIES, VOICESTUDIO_ID, type StudioState,
+} from './voicestudio.js';
 import { VOICES, edgeNarrator, type Narration, type Narrator } from './narration.js';
 import { validPasswordInput } from './password.js';
 import { type EventStatus, AuthStore, AI_IMAGE_LIMIT, AI_TEXT_LIMIT, NARRATION_LIMIT, SESSION_TTL, invalidCredentials, type TokenPurpose, type User } from './store.js';
@@ -60,6 +63,8 @@ const narrationSchema = z.object({
   // sem voz no pedido, vale a inicial: VoiceStudio se estiver no ar, senão Edge TTS
   voice: z.enum(VOICES.map((voice) => voice.id) as [string, ...string[]]).optional(),
   rate: z.number().min(0.5).max(2),
+  // só vale para a voz do OmniVoice
+  quality: z.enum(['fast', 'best']).optional(),
 }).strict();
 
 /** Arquivos que a tela de login precisa: os únicos liberados sem sessão. */
@@ -102,7 +107,7 @@ export interface AppOptions {
   /** Gera a narração; os testes trocam pelo falso. */
   narrator?: Narrator;
   /** O VoiceStudio está no ar? Por padrão o servidor sonda; com narrador falso, vale "sim". */
-  studioAvailable?: () => Promise<boolean>;
+  studioAvailable?: () => Promise<boolean | StudioState>;
   /** Cliente do opencode-gateway; null desliga a IA do servidor. */
   gateway?: Gateway | null;
 }
@@ -295,7 +300,22 @@ export function createApp(options: AppOptions = {}): express.Express {
   // Narração para pessoas autenticadas.
 
   const studio = createVoiceStudio(config.voiceStudio ?? { url: 'http://127.0.0.1:3900' });
-  type VoiceJob = { owner: string; result?: Narration; failed?: boolean };
+  const omni = createOmniVoice(config.voiceStudio ?? { url: 'http://127.0.0.1:3900' });
+  type VoiceJob = {
+    owner: string;
+    result?: Narration;
+    failed?: boolean;
+    /** a pessoa desistiu; o backend segue até terminar e o resultado é descartado */
+    cancelled?: boolean;
+    /** o backend terminou (com ou sem sucesso): a vaga está livre */
+    finished?: boolean;
+    /** segundos de áudio prontos, total previsto e início, para o andamento na tela */
+    done: number;
+    total: number;
+    startedAt: number;
+    /** segundos de espera por segundo de áudio, para estimar antes do primeiro áudio */
+    ratio: number;
+  };
   const voiceJobs = new Map<string, VoiceJob>();
   const voiceError = 'O VoiceStudio não respondeu. Tente novamente ou selecione uma voz do Edge TTS.';
   app.get('/api/narration/jobs/:id', requireUser, (req, res) => {
@@ -303,14 +323,36 @@ export function createApp(options: AppOptions = {}): express.Express {
     const job = voiceJobs.get(id);
     if (!job || job.owner !== res.locals.user.id) {
       res.status(404).json({ error: 'Narração expirada.' });
+    } else if (job.cancelled) {
+      res.status(410).json({ error: 'Narração cancelada.' });
     } else if (job.failed) {
       res.status(502).json({ error: voiceError });
     } else if (job.result) {
       const { audio, words, mimeType } = job.result;
       res.json({ audio: audio.toString('base64'), words, mimeType });
     } else {
-      res.status(202).json({ jobId: id });
+      res.status(202).json({ jobId: id, progress: { done: job.done, total: job.total, elapsed: (now() - job.startedAt) / 1000 } });
     }
+  });
+
+  /** Segundos que faltam para uma narração em curso terminar: pela velocidade real, ou pela estimativa. */
+  const remaining = (job: VoiceJob): number => {
+    const elapsed = (now() - job.startedAt) / 1000;
+    const left = job.done > 0 ? (elapsed / job.done) * Math.max(0, job.total - job.done) : job.total * job.ratio - elapsed;
+    return Math.max(5, Math.round(left));
+  };
+
+  // O VoiceStudio não interrompe uma fala já começada. Cancelar libera a pessoa
+  // na hora, mas a vaga só volta quando o backend terminar de verdade.
+  app.delete('/api/narration/jobs/:id', requireUser, (req, res) => {
+    const job = voiceJobs.get(String(req.params.id));
+    if (!job || job.owner !== res.locals.user.id) {
+      res.status(404).json({ error: 'Narração expirada.' });
+      return;
+    }
+    const running = !job.result && !job.failed && !job.finished;
+    if (running) job.cancelled = true;
+    res.json({ ok: true, busyFor: running ? remaining(job) : 0 });
   });
 
   function requireUser(req: Request, res: Response, next: NextFunction): void {
@@ -323,14 +365,35 @@ export function createApp(options: AppOptions = {}): express.Express {
     next();
   }
 
-  const studioAvailable = options.studioAvailable
+  const probe = options.studioAvailable
     ?? (options.narrator ? () => Promise.resolve(true) : createStudioProbe(config.voiceStudio ?? { url: 'http://127.0.0.1:3900' }));
+  /** true/false (testes antigos) vira o estado completo: no ar com os estilos da 0.8.0, ou fora do ar. */
+  const studioState = async (): Promise<StudioState> => {
+    const value = await probe();
+    return typeof value === 'boolean' ? { up: value, kokoro: value } : value;
+  };
+  const isEdge = (id: string): boolean => !studioStyle(id) && id !== OMNIVOICE_ID;
   const EDGE_DEFAULT = 'pt-BR-AntonioNeural';
 
   app.get('/api/narration/voices', requireUser, async (_req, res) => {
-    // onde o VoiceStudio não roda, as vozes dele nem aparecem
-    const studioUp = await studioAvailable();
-    res.json({ voices: studioUp ? VOICES : VOICES.filter((voice) => !studioStyle(voice.id)), maxChars: MAX_NARRATION_CHARS, voiceStudio: studioUp });
+    const state = await studioState();
+    const edge = VOICES.filter((voice) => isEdge(voice.id));
+    // com Kokoro (mlx-audio): os quatro estilos, e o VoiceStudio é a voz inicial.
+    // só com OmniVoice (CPU, lento): uma voz, depois das do Edge, que é a inicial.
+    // fora do ar: só o Edge.
+    const voices = !state.up ? edge
+      : state.kokoro ? VOICES.filter((voice) => voice.id !== OMNIVOICE_ID)
+        : [...edge, ...VOICES.filter((voice) => voice.id === OMNIVOICE_ID)];
+    res.json({
+      voices,
+      maxChars: MAX_NARRATION_CHARS,
+      voiceStudio: state.up,
+      defaultVoice: state.up && state.kokoro ? VOICESTUDIO_ID : EDGE_DEFAULT,
+      // qualidades e custo estimado só existem no modo OmniVoice
+      studio: state.up && !state.kokoro
+        ? { voice: OMNIVOICE_ID, qualities: STUDIO_QUALITIES.map(({ id, label, ratio }) => ({ id, label, ratio })) }
+        : null,
+    });
   });
 
   app.post('/api/narration', requireUser, async (req, res) => {
@@ -343,14 +406,25 @@ export function createApp(options: AppOptions = {}): express.Express {
       return;
     }
     const user = res.locals.user as User;
-    const studioUp = await studioAvailable();
-    const voice = parsed.data.voice ?? (studioUp ? VOICESTUDIO_ID : EDGE_DEFAULT);
-    const isStudio = Boolean(studioStyle(voice));
-    if (isStudio && !studioUp) {
-      res.status(503).json({ error: 'O VoiceStudio não está disponível neste servidor. Escolha uma voz do Edge TTS.' });
+    const state = await studioState();
+    const voice = parsed.data.voice ?? (state.up && state.kokoro ? VOICESTUDIO_ID : EDGE_DEFAULT);
+    const isOmni = voice === OMNIVOICE_ID;
+    const isStudio = isOmni || Boolean(studioStyle(voice));
+    // cada voz do VoiceStudio depende do motor que o backend tem
+    if (isStudio && (!state.up || (isOmni ? state.kokoro : !state.kokoro))) {
+      res.status(503).json({ error: 'Esta voz do VoiceStudio não está disponível neste servidor. Escolha outra voz.' });
       return;
     }
-    if (isStudio && (voiceJobs.size >= 8 || [...voiceJobs.values()].some(job => job.owner === user.id && !job.result && !job.failed))) {
+    // em CPU a síntese usa todos os núcleos: uma narração por vez no servidor inteiro
+    const busy = isOmni ? [...voiceJobs.values()].find((job) => !job.finished) : undefined;
+    if (busy) {
+      const wait = remaining(busy);
+      res.status(429).set('Retry-After', String(Math.min(wait, 600))).json({
+        error: `${busy.cancelled ? 'O VoiceStudio ainda está terminando uma narração cancelada' : 'O VoiceStudio já está gerando uma narração e só faz uma por vez'}. Deve ficar livre em cerca de ${wait < 90 ? `${wait} s` : `${Math.round(wait / 60)} min`}. Até lá, use uma voz do Edge TTS.`,
+      });
+      return;
+    }
+    if (isStudio && (voiceJobs.size >= 8 || [...voiceJobs.values()].some(job => job.owner === user.id && !job.finished && !job.cancelled))) {
       res.status(429).json({ error: 'Há narrações em andamento. Aguarde e tente novamente.' });
       return;
     }
@@ -359,24 +433,41 @@ export function createApp(options: AppOptions = {}): express.Express {
       failure(res, blocked);
       return;
     }
-    const narrator = options.narrator ?? (isStudio ? studio : edgeNarrator);
+    const narrator = options.narrator ?? (isOmni ? omni : isStudio ? studio : edgeNarrator);
+    const quality = isOmni ? parsed.data.quality ?? 'fast' : undefined;
+    const job: VoiceJob = {
+      owner: user.id, done: 0, total: estimateAudioSeconds(parsed.data.text, parsed.data.rate), startedAt: now(),
+      ratio: STUDIO_QUALITIES.find((q) => q.id === quality)?.ratio ?? STUDIO_QUALITIES[0].ratio,
+    };
     const generate = async () => {
       const result = await narrator({
         text: parsed.data.text,
         voice: voice as (typeof VOICES)[number]['id'],
         rate: parsed.data.rate,
+        ...(isOmni ? { quality, onProgress: (seconds: number) => { job.done = seconds; } } : {}),
       });
-      audit(user, 'narration', 'ok', { voz: voice, velocidade: parsed.data.rate, caracteres: parsed.data.text.length, roteiro: parsed.data.text.slice(0, 1_500) });
+      if (job.cancelled) {
+        audit(user, 'narration', 'info', { voz: voice, observação: 'cancelada pela pessoa' });
+        return result;
+      }
+      audit(user, 'narration', 'ok', {
+        voz: voice, velocidade: parsed.data.rate, caracteres: parsed.data.text.length,
+        ...(isOmni ? { qualidade: quality ?? '', espera: `${Math.round((now() - job.startedAt) / 1000)} s` } : {}),
+        roteiro: parsed.data.text.slice(0, 1_500),
+      });
       return result;
     };
     if (isStudio) {
       const id = crypto.randomUUID();
-      const job: VoiceJob = { owner: user.id };
       voiceJobs.set(id, job);
-      void generate().then(result => { job.result = result; }, () => {
+      void generate().then(result => {
+        // narração cancelada: o áudio é descartado
+        if (!job.cancelled) job.result = result;
+      }, (error: unknown) => {
         job.failed = true;
+        console.error(`Falha no VoiceStudio: ${error instanceof Error ? error.message : 'erro desconhecido'}`);
         audit(user, 'narration', 'fail', { voz: voice });
-      }).finally(() => setTimeout(() => voiceJobs.delete(id), 60_000).unref());
+      }).finally(() => { job.finished = true; }).finally(() => setTimeout(() => voiceJobs.delete(id), 60_000).unref());
       res.status(202).json({ jobId: id });
       return;
     }
