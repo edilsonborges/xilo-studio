@@ -88,6 +88,18 @@ animais) e `src/engine/character.ts` (tipos de personagem e 27 ações).
 |---|---|---|---|
 | ![Cenários](docs/cenarios-3d.jpg) | ![Ações](docs/acoes-3d.jpg) | ![Veículos](docs/veiculos-3d.jpg) | ![Clima](docs/clima-3d.jpg) |
 
+A direção das cenas 3D pela IA do Xilo tem duas etapas (`src/director/`):
+
+1. **Ficha da história** (`STORY_PROMPT`): elenco, tom e arco de lugares, hora e
+   clima, fixos para todas as cenas.
+2. **Cenas**: seguem a ficha, com dois exemplos da biblioteca
+   (`examples.ts`) escolhidos pelo cenário e, ao gerar de novo, as orientações
+   de variação (`variants.ts`).
+
+Cada personagem pode ter `actions`: deixas `{ "at": palavra ou segundos, "do":
+ação }` que trocam a ação no instante em que a palavra é narrada. Sem IA, o
+gerador por regras cria as mesmas deixas a partir dos verbos do roteiro.
+
 Gestos e reações tocam uma vez e o personagem volta a ficar parado (`ONE_SHOT`
 em `src/engine/character.ts`); as demais ações valem a cena inteira.
 

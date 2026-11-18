@@ -720,23 +720,104 @@ function restore(rig: CharacterRig, v: number[]): void {
 const poseA: number[] = [];
 const poseB: number[] = [];
 
+/** Ações em que o personagem se desloca a pé. */
+export const LOCOMOTION: ReadonlySet<AnimationName> = new Set<AnimationName>(['walk', 'run', 'carry']);
+
+const TRANSITION = 0.32;
+
 /**
- * Pose final do personagem no instante `time`. Gestos de uma vez (ONE_SHOT) são
- * misturados com o estado de base conforme o tempo de cena; o resto é a pose
- * direta. Continua função pura do tempo: o mesmo instante dá o mesmo quadro.
+ * Pose de uma ação que começou há `local` segundos. Gestos de uma vez (ONE_SHOT)
+ * são misturados com o estado de base; o resto é a pose direta.
  */
-export function animateCharacter(rig: CharacterRig, animation: AnimationName, time: number, options: PoseOptions = {}): void {
-  const weight = oneShotWeight(animation, options.elapsed ?? 0, rig.phase);
+function poseAction(rig: CharacterRig, animation: AnimationName, time: number, local: number, options: PoseOptions, delay: number): void {
+  const opts = { ...options, elapsed: local };
+  const weight = oneShotWeight(animation, local + 0.35 - delay, 0);
   if (weight >= 1) {
-    poseCharacter(rig, animation, time, options);
+    poseCharacter(rig, animation, time, opts);
     return;
   }
   // base: escutando (ou sentado, se estiver num assento)
-  poseCharacter(rig, 'listen', time, options);
+  poseCharacter(rig, 'listen', time, opts);
   if (weight <= 0) return;
   capture(rig, poseA);
-  poseCharacter(rig, animation, time, options);
+  poseCharacter(rig, animation, time, opts);
   capture(rig, poseB);
   for (let i = 0; i < NUMBERS_PER_RIG; i++) poseB[i] = poseA[i] + (poseB[i] - poseA[i]) * weight;
   restore(rig, poseB);
+}
+
+const poseC: number[] = [];
+
+export interface Cue {
+  at: number;
+  do: AnimationName;
+}
+
+/** Ação em curso em `elapsed` segundos de cena, e a anterior (para a transição). */
+export function activeCue(base: AnimationName, cues: readonly Cue[] | undefined, elapsed: number): { action: AnimationName; since: number; previous: AnimationName | null; previousSince: number } {
+  let action = base;
+  let since = 0;
+  let previous: AnimationName | null = null;
+  let previousSince = 0;
+  for (const cue of cues ?? []) {
+    if (cue.at > elapsed) break;
+    previous = action;
+    previousSince = since;
+    action = cue.do;
+    since = cue.at;
+  }
+  return { action, since, previous, previousSince };
+}
+
+/**
+ * Pose final do personagem. Sem deixas, vale `animation` a cena inteira (gestos
+ * de uma vez começam logo no início). Com deixas, cada uma troca a ação no seu
+ * instante, com transição suave. Função pura do tempo: o mesmo instante dá o
+ * mesmo quadro.
+ */
+export function animateCharacter(rig: CharacterRig, animation: AnimationName, time: number, options: PoseOptions = {}, cues?: readonly Cue[]): void {
+  const elapsed = options.elapsed ?? 0;
+  if (!cues?.length) {
+    // cada personagem começa num instante um pouco diferente, para não reagirem em coro
+    poseAction(rig, animation, time, elapsed, options, 0.35 + (rig.phase % 0.7));
+    return;
+  }
+  const cue = activeCue(animation, cues, elapsed);
+  const local = elapsed - cue.since;
+  // a ação inicial da cena segue a regra de sempre; as deixas começam na hora marcada
+  const delay = cue.since === 0 && cue.previous === null ? 0.35 + (rig.phase % 0.7) : 0;
+  if (cue.previous === null || local >= TRANSITION) {
+    poseAction(rig, cue.action, time, local, options, delay);
+    return;
+  }
+  poseAction(rig, cue.previous, time, elapsed - cue.previousSince, options, 0);
+  capture(rig, poseC);
+  poseAction(rig, cue.action, time, local, options, delay);
+  capture(rig, poseB);
+  const w = smooth(local / TRANSITION);
+  for (let i = 0; i < NUMBERS_PER_RIG; i++) poseB[i] = poseC[i] + (poseB[i] - poseC[i]) * w;
+  restore(rig, poseB);
+}
+
+/**
+ * Quanto do caminho o personagem já andou (0 a 1). Com deixas, ele só se
+ * desloca enquanto a ação em curso é de andar, correr ou carregar.
+ */
+export function travelProgress(base: AnimationName, cues: readonly Cue[] | undefined, elapsed: number, duration: number): { progress: number; travelling: boolean } {
+  const linear = Math.min(1, Math.max(0, elapsed / Math.max(0.001, duration)));
+  if (!cues?.length) return { progress: linear, travelling: linear < 1 };
+  const marks = [{ at: 0, do: base }, ...cues.filter((c) => c.at < duration)];
+  let total = 0;
+  let done = 0;
+  let travelling = false;
+  marks.forEach((mark, i) => {
+    if (!LOCOMOTION.has(mark.do)) return;
+    const end = marks[i + 1]?.at ?? duration;
+    total += end - mark.at;
+    done += Math.min(Math.max(elapsed - mark.at, 0), end - mark.at);
+    if (elapsed >= mark.at && elapsed < end) travelling = true;
+  });
+  // ninguém anda nas deixas: mantém o deslocamento contínuo de antes
+  if (total <= 0) return { progress: linear, travelling: linear < 1 };
+  return { progress: done / total, travelling };
 }

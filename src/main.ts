@@ -90,6 +90,9 @@ let audioUrl: string | null = null;
 let narrated: GeneratedNarration | null = null;
 let downloadUrl: string | null = null;
 let narrating = false;
+/** gerar de novo o mesmo roteiro pede outra versão: o número sobe a cada vez */
+let lastDirected = '';
+let variation = 0;
 let project: Project | null = null;
 let busy = false;
 let exporting: AbortController | null = null;
@@ -393,14 +396,18 @@ async function generate(): Promise<void> {
     step = addStatus(`Dirigindo ${slots.length} cenas…`);
     // sem a IA do servidor (ex.: só o Vite rodando), "IA do Xilo" vira regras
     const directorSettings = settings.llmProvider === 'xilo' && !ai.text ? { ...settings, llmProvider: 'none' as const } : settings;
+    const directedKey = `${script}|${settings.videoStyle}`;
+    variation = directedKey === lastDirected ? variation + 1 : 0;
+    lastDirected = directedKey;
     const directed = await directScenes(script, slots, directorSettings, (message) => {
       step.textContent = message;
-    });
+    }, variation);
     if (directed.warning) addStatus(directed.warning, 'warn');
     const llmName = directorSettings.llmProvider === 'xilo' ? 'IA do Xilo' : `LLM (${directorSettings.llmProvider})`;
     const origin = { llm: llmName, rules: 'gerador por regras', mixed: `${llmName} + regras` }[directed.source];
     step.className = 'ok';
-    step.textContent = `Cenas: ${directed.graph.scenes.length}, via ${origin}.`;
+    step.textContent = `Cenas: ${directed.graph.scenes.length}, via ${origin}${variation ? ` (variação ${variation + 1})` : ''}.`;
+    if (directed.story?.setting) addStatus(`História: ${directed.story.setting}${directed.story.tone ? `, tom ${directed.story.tone}` : ''}; ${directed.story.cast.length} personagens.`, 'ok');
 
     const comp = ensureEngine();
     project = { file, buffer, timeline, graph: directed.graph };
@@ -412,6 +419,7 @@ async function generate(): Promise<void> {
       roteiro: script.slice(0, 1_500),
       estilo: ui.videoStyle.selectedOptions[0]?.textContent ?? settings.videoStyle,
       cenas: directed.graph.scenes.length,
+      variação: variation + 1,
       direção: origin,
       duração: `${buffer.duration.toFixed(1)} s`,
       áudio: narrated?.file === file ? 'voz gerada' : 'áudio enviado',

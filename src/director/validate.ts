@@ -19,6 +19,7 @@ import {
   type CharacterKind,
   type TimeOfDay,
   type Weather,
+  type ActionCue,
   type AnimationName,
   type CameraDef,
   type CameraMovement,
@@ -31,9 +32,10 @@ import {
   type SceneDef,
   type SceneGraphJSON,
   type SceneSlot,
+  type StorySheet,
   type Vec3,
 } from '../types';
-import { clamp, normalizeText } from '../util';
+import { clamp, normalizeText, wordKey } from '../util';
 
 const MAX_CHARACTERS = 6;
 /** objetos com assento onde um personagem pode ir montado ou sentado */
@@ -618,7 +620,60 @@ function sanitizeEnvironment(raw: unknown): EnvironmentDef {
 
 type Look = Pick<CharacterDef, 'skinColor' | 'shirtColor' | 'pantsColor' | 'accessory' | 'kind'>;
 
-function sanitizeCharacters(raw: unknown, registry: Map<string, Look>): CharacterDef[] {
+const MAX_CUES = 6;
+const LOCOMOTION = new Set<AnimationName>(['walk', 'run', 'carry']);
+
+/**
+ * Deixas de ação: `at` em segundos desde o início da cena, ou uma palavra da
+ * narração (vale o instante em que ela é falada). Saem ordenadas e sem repetição.
+ */
+function sanitizeCues(raw: unknown, base: AnimationName, slot?: SceneSlot): ActionCue[] {
+  if (!Array.isArray(raw)) return [];
+  const duration = slot ? slot.endTime - slot.startTime : Infinity;
+  const words = slot?.words ?? [];
+  let from = 0;
+  const cues: ActionCue[] = [];
+  for (const item of raw.slice(0, MAX_CUES * 2)) {
+    const r = asRecord(item);
+    const action = closestEnum(r.do ?? r.animation ?? r.action, ANIMATIONS, 'idle', ANIMATION_ALIASES);
+    let at: number | undefined;
+    if (typeof r.at === 'number' && Number.isFinite(r.at)) at = r.at;
+    else if (typeof r.at === 'string' && r.at.trim()) {
+      const numeric = Number(r.at);
+      if (Number.isFinite(numeric)) at = numeric;
+      else if (slot) {
+        // palavra da narração: a primeira ocorrência depois da deixa anterior
+        const key = wordKey(r.at.trim().split(/\s+/)[0]);
+        const matches = (w: { text: string }): boolean => wordKey(w.text) === key || wordKey(w.text).startsWith(key);
+        // palavra repetida: vale a ocorrência depois da deixa anterior; fora de ordem, a primeira
+        let index = key ? words.findIndex((w, i) => i >= from && matches(w)) : -1;
+        if (index < 0 && key) index = words.findIndex(matches);
+        if (index >= 0) {
+          at = words[index].start - slot.startTime;
+          from = index + 1;
+        }
+      }
+    }
+    if (at === undefined) continue;
+    at = Math.round(clamp(at, 0, Math.max(0, duration - 0.3)) * 100) / 100;
+    cues.push({ at, do: action });
+  }
+  cues.sort((a, b) => a.at - b.at);
+  const out: ActionCue[] = [];
+  let current = base;
+  for (const cue of cues) {
+    const last = out.at(-1);
+    if (cue.do === current) continue;
+    // deixas coladas: vale a última
+    if (last && cue.at - last.at < 0.4) out.pop();
+    out.push(cue);
+    current = cue.do;
+    if (out.length >= MAX_CUES) break;
+  }
+  return out;
+}
+
+function sanitizeCharacters(raw: unknown, registry: Map<string, Look>, slot?: SceneSlot): CharacterDef[] {
   if (!Array.isArray(raw)) return [];
   const out: CharacterDef[] = [];
   const seen = new Set<string>();
@@ -653,9 +708,13 @@ function sanitizeCharacters(raw: unknown, registry: Map<string, Look>): Characte
       ...look,
       animation: closestEnum(r.animation, ANIMATIONS, 'idle', ANIMATION_ALIASES),
     };
+    const cues = sanitizeCues(r.actions, def.animation, slot);
+    // uma deixa no instante zero é a própria ação inicial
+    if (cues[0]?.at === 0) def.animation = cues.shift()!.do;
+    if (cues.length) def.actions = cues;
     if (target) def.targetPosition = target;
     // andar ou correr sem destino seria marchar no lugar: atravessa o quadro
-    else if (def.animation === 'walk' || def.animation === 'run') {
+    else if (LOCOMOTION.has(def.animation) && def.animation !== 'carry' || cues.some((c) => LOCOMOTION.has(c.do))) {
       def.targetPosition = [position[0] > 0 ? position[0] - 3 : position[0] + 3, 0, clamp(position[2] + 1.2, -WORLD_LIMIT, WORLD_LIMIT)];
     }
     if (typeof r.mount === 'string' && r.mount.trim()) def.mount = r.mount.trim().slice(0, 40);
@@ -713,10 +772,10 @@ function sanitizeCamera(raw: unknown, characters: CharacterDef[]): CameraDef {
   return cam;
 }
 
-function sanitizeScene(raw: unknown, id: string, registry: Map<string, Look>): SceneDef {
+function sanitizeScene(raw: unknown, id: string, registry: Map<string, Look>, slot?: SceneSlot): SceneDef {
   const r = asRecord(raw);
   const environment = sanitizeEnvironment(r.environment);
-  const characters = sanitizeCharacters(r.characters, registry);
+  const characters = sanitizeCharacters(r.characters, registry, slot);
   const scene: SceneDef = {
     id,
     startTime: Math.max(0, num(r.startTime, 0)),
@@ -764,7 +823,7 @@ export function sanitizeSceneGraph(
     }
     const scenes = slots.map((slot, i) => {
       const source = byId.get(slot.id) ?? rawScenes[i] ?? fallback?.[i];
-      const scene = sanitizeScene(source, slot.id, registry);
+      const scene = sanitizeScene(source, slot.id, registry, slot);
       scene.startTime = slot.startTime;
       scene.endTime = slot.endTime;
       return scene;
@@ -784,4 +843,36 @@ export function sanitizeSceneGraph(
     prevEnd = scene.endTime;
   }
   return { scenes };
+}
+
+const text = (value: unknown, max: number): string => (typeof value === 'string' ? value.trim().slice(0, max) : '');
+
+/** Normaliza a ficha da história devolvida pela IA; null se não der para usar. */
+export function sanitizeStorySheet(raw: unknown): StorySheet | null {
+  const r = asRecord(raw);
+  const cast = (Array.isArray(r.cast) ? r.cast : []).slice(0, MAX_CHARACTERS).map((item, i) => {
+    const c = asRecord(item);
+    return {
+      id: (text(c.id, 40) || `person_${i + 1}`).toLowerCase().replace(/[^a-z0-9_]+/g, '_'),
+      role: text(c.role, 80),
+      trait: text(c.trait, 80),
+      kind: closestEnum(c.kind, CHARACTER_KINDS, 'man', KIND_ALIASES),
+      skinColor: sanitizeColor(c.skinColor) ?? '#8d5524',
+      shirtColor: sanitizeColor(c.shirtColor) ?? '#f4f1ea',
+      pantsColor: sanitizeColor(c.pantsColor) ?? '#3d352e',
+      accessory: closestEnum(c.accessory, ACCESSORIES, 'none', ACCESSORY_ALIASES),
+    };
+  });
+  const arc = (Array.isArray(r.arc) ? r.arc : []).slice(0, 12).map((item) => {
+    const a = asRecord(item);
+    const place = closestEnum(a.place, PRESETS, 'sertao_day', PRESET_ALIASES);
+    return {
+      place,
+      timeOfDay: closestEnum(a.timeOfDay, TIMES_OF_DAY, 'day', TIME_ALIASES),
+      weather: closestEnum(a.weather, WEATHERS, 'clear', WEATHER_ALIASES),
+      note: text(a.note, 120),
+    };
+  });
+  if (cast.length === 0 && arc.length === 0) return null;
+  return { setting: text(r.setting, 120), tone: text(r.tone, 80), cast, arc };
 }
