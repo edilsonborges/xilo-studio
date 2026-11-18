@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createVoiceStudio, VOICESTUDIO_ID } from './voicestudio.js';
-import { createOmniVoice, createStudioProbe } from './voicestudio.js';
+import { createOmniVoice, createStudioProbe, patientFetch } from './voicestudio.js';
+import { createServer } from 'node:http';
 
 test('VoiceStudio divide o roteiro no limite da API e reúne PCM em um único WAV', async () => {
   const parts: string[] = [];
@@ -42,10 +43,15 @@ test('sonda do VoiceStudio: fora do ar, só com OmniVoice, com Kokoro; guarda po
   let calls = 0;
   let reply: (() => Response) | null = null;
   let clock = 0;
+  let profiles: string[] | null = null;
   const probe = createStudioProbe({ url: 'http://127.0.0.1:3900', key: 'chave' }, (async (url: URL | string, init?: RequestInit) => {
+    assert.equal((init?.headers as Record<string, string>).Authorization, 'Bearer chave');
+    if (String(url) === 'http://127.0.0.1:3900/profiles') {
+      if (!profiles) throw new Error('ECONNRESET');
+      return new Response(JSON.stringify(profiles.map((name) => ({ id: 'x', name }))), { headers: { 'content-type': 'application/json' } });
+    }
     calls++;
     assert.equal(String(url), 'http://127.0.0.1:3900/engines/tts');
-    assert.equal((init?.headers as Record<string, string>).Authorization, 'Bearer chave');
     if (!reply) throw new Error('ECONNREFUSED');
     return reply();
   }) as typeof fetch, () => clock);
@@ -56,13 +62,17 @@ test('sonda do VoiceStudio: fora do ar, só com OmniVoice, com Kokoro; guarda po
   assert.equal(calls, 1, 'dentro de um minuto não sonda de novo');
   reply = engines(false);
   clock = 61_000;
-  assert.deepEqual(await probe(), { up: true, kokoro: false });
+  // sem Kokoro, os estilos vêm dos perfis de voz; falha na lista vale como nenhum
+  assert.deepEqual(await probe(), { up: true, kokoro: false, clones: [] });
+  profiles = ['Demo Voice', 'Xilo Conto', 'Xilo Notícia', 'Xilo Natural'];
+  clock = 121_500;
+  assert.deepEqual(await probe(), { up: true, kokoro: false, clones: ['voicestudio-pt-br', 'voicestudio-conto'] });
   reply = engines(true);
-  clock = 122_000;
+  clock = 182_000;
   assert.deepEqual(await probe(), { up: true, kokoro: true });
   // respondeu sem a lista de motores: trata como a instalação antiga, com Kokoro
   reply = () => new Response('not found', { status: 404 });
-  clock = 183_000;
+  clock = 243_000;
   assert.deepEqual(await probe(), { up: true, kokoro: true });
 });
 
@@ -85,7 +95,39 @@ test('OmniVoice: um pedido em streaming, passos pela qualidade e andamento pelos
   // qualidade rápida é o padrão
   await speak({ text: 'Outra frase.', voice: 'voicestudio-omnivoice', rate: 1 });
   assert.equal(bodies[1].num_step, 8);
+  assert.equal('voice' in bodies[1], false, 'a voz padrão do motor não leva perfil');
+  // estilo clonado: vai o nome do perfil de voz
+  await speak({ text: 'Era uma vez.', voice: 'voicestudio-conto', rate: 1 });
+  assert.equal(bodies[2].voice, 'Xilo Conto');
   // resposta que não é áudio vira erro
   const broken = createOmniVoice({ url: 'http://localhost:3900' }, (async () => new Response('{"error":"x"}', { status: 503, headers: { 'content-type': 'application/json' } })) as typeof fetch);
   await assert.rejects(broken({ text: 'x', voice: 'voicestudio-omnivoice', rate: 1 }), /HTTP 503/);
+});
+
+test('pedido ao OmniVoice pela rede: corpo, cabeçalhos, áudio em pedaços e cancelamento', async (t) => {
+  const seen: Array<{ auth?: string; body: string }> = [];
+  const server = createServer((req, res) => {
+    let body = '';
+    req.on('data', (piece) => { body += piece; });
+    req.on('end', () => {
+      seen.push({ auth: req.headers.authorization, body });
+      if (req.url === '/lento') return; // nunca responde
+      if (req.url === '/erro') { res.writeHead(500, { 'content-type': 'application/json' }).end('{"error":"x"}'); return; }
+      res.writeHead(200, { 'content-type': 'audio/pcm' });
+      res.write(Buffer.alloc(48_000));
+      setTimeout(() => res.end(Buffer.alloc(96_000)), 30);
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address() as { port: number };
+  const progress: number[] = [];
+  const speak = createOmniVoice({ url: `http://127.0.0.1:${port}`, key: 'chave' });
+  const result = await speak({ text: 'Era uma vez.', voice: 'voicestudio-conto', rate: 1, onProgress: (s) => progress.push(s) });
+  assert.equal(result.audio.length, 44 + 144_000);
+  assert.equal(progress.at(-1), 3);
+  assert.equal(seen[0].auth, 'Bearer chave');
+  assert.equal(JSON.parse(seen[0].body).voice, 'Xilo Conto');
+  assert.equal((await patientFetch(`http://127.0.0.1:${port}/erro`, { method: 'POST', body: '{}' })).status, 500);
+  await assert.rejects(patientFetch(`http://127.0.0.1:${port}/lento`, { method: 'POST', body: '{}', signal: AbortSignal.timeout(100) }));
 });

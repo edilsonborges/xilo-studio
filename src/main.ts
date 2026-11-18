@@ -436,12 +436,17 @@ async function setupVoices(): Promise<void> {
 // ---------- VoiceStudio lento: qualidade e espera prevista ----------
 
 /** Preenchido quando o VoiceStudio do servidor é o OmniVoice em CPU. */
-let studioSlow: { voice: string; qualities: StudioQuality[] } | null = null;
+let studioSlow: { voice: string; voices?: Record<string, number>; qualities: StudioQuality[] } | null = null;
 let narrationAbort: AbortController | null = null;
 
-const usingSlowStudio = (): boolean => studioSlow !== null && ui.ttsVoice.value === studioSlow.voice;
-const chosenQuality = (): StudioQuality | undefined =>
-  studioSlow?.qualities.find((q) => q.id === settings.ttsQuality) ?? studioSlow?.qualities[0];
+/** Quanto a voz escolhida multiplica a espera (voz clonada custa mais); 0 se não é uma voz lenta. */
+const slowdown = (): number => studioSlow ? studioSlow.voices?.[ui.ttsVoice.value] ?? (ui.ttsVoice.value === studioSlow.voice ? 1 : 0) : 0;
+const usingSlowStudio = (): boolean => slowdown() > 0;
+/** A qualidade escolhida, já com a espera da voz atual. */
+const chosenQuality = (): StudioQuality | undefined => {
+  const quality = studioSlow?.qualities.find((q) => q.id === settings.ttsQuality) ?? studioSlow?.qualities[0];
+  return quality && { ...quality, ratio: quality.ratio * slowdown() };
+};
 
 function buildStudioQualities(): void {
   const box = $('studio-qualities');
@@ -473,11 +478,14 @@ function refreshStudioOptions(): void {
     const quality = studioSlow.qualities.find((q) => q.id === button.dataset.quality)!;
     button.setAttribute('aria-checked', String(quality.id === current?.id));
     button.disabled = narrating;
-    button.querySelector('small')!.textContent = `espera de cerca de ${formatDuration(audio * quality.ratio)}`;
+    button.querySelector('small')!.textContent = `espera de cerca de ${formatDuration(audio * quality.ratio * slowdown())}`;
   }
+  const why = slowdown() > 1
+    ? 'Neste servidor o VoiceStudio roda sem placa de vídeo, e este estilo é uma voz clonada, a mais demorada.'
+    : 'Neste servidor o VoiceStudio roda sem placa de vídeo e demora.';
   $('studio-note').textContent = text
-    ? `Neste servidor o VoiceStudio roda sem placa de vídeo e demora. Para este roteiro (cerca de ${formatDuration(audio)} de áudio):`
-    : 'Neste servidor o VoiceStudio roda sem placa de vídeo e demora. Escolha a qualidade:';
+    ? `${why} Para este roteiro (cerca de ${formatDuration(audio)} de áudio):`
+    : `${why} Escolha a qualidade:`;
 }
 
 $('narration-cancel').addEventListener('click', () => narrationAbort?.abort());

@@ -116,7 +116,7 @@ O Xilo confere a cada minuto se o VoiceStudio responde em `VOICESTUDIO_URL` e qu
 |---|---|
 | Fora do ar | só as vozes do Edge TTS |
 | No ar, com o motor `mlx-audio` (Kokoro) | os quatro estilos da 0.8.0, e o VoiceStudio é a voz inicial |
-| No ar, só com o motor `omnivoice` | as vozes do Edge (inicial) e uma voz "VoiceStudio · OmniVoice", com as qualidades Rápida (8 passos) e Máxima (16 passos) |
+| No ar, só com o motor `omnivoice` | as vozes do Edge (inicial), a voz "VoiceStudio · OmniVoice" e os estilos Natural e Conto que tiverem perfil de voz, todos com as qualidades Rápida (8 passos) e Máxima (16 passos) |
 
 ### VoiceStudio no servidor de produção (Docker, só CPU)
 
@@ -137,6 +137,10 @@ docker run -d --name omnivoice --restart unless-stopped --memory=6g --cpus=6 \
 - O único motor em português disponível nessa imagem é o OmniVoice, com licença de uso não comercial (CC-BY-NC), aceita em 18/11/2026. O `mlx-audio` não roda fora de Apple Silicon, e o Supertonic-3 só instala pelo aplicativo de desktop.
 - Velocidade medida nesse servidor: cerca de 11 segundos de espera por segundo de áudio na qualidade Rápida e 25 na Máxima. Uma narração de 30 s leva uns 5 ou 12 minutos.
 - O backend não interrompe uma fala já começada. O Xilo deixa uma narração por vez e, ao cancelar, só libera a vaga quando o backend termina.
+- Os estilos Natural e Conto são vozes clonadas. O Xilo os oferece quando encontra, em `GET /profiles`, os perfis de voz `Xilo Natural` e `Xilo Conto`. Para recriar um perfil, envie a amostra do estilo (`src/assets/vozes/voicestudio-pt-br.mp3` ou `voicestudio-conto.mp3`) em `POST /profiles`, com `name`, `ref_audio`, `language=pt-BR` e `kind=clone`. Crie um por vez: a criação carrega um modelo de transcrição e já derrubou o container por falta de memória.
+- Voz clonada custa cerca de 2,5 vezes a voz padrão: uns 28 segundos de espera por segundo de áudio na qualidade Rápida e 54 na Máxima. A primeira narração com cada voz depois de um reinício leva um a dois minutos a mais, porque o backend prepara a voz.
+- O backend só começa a responder quando a primeira frase fica pronta, o que pode passar de cinco minutos. O `fetch` do Node desiste aos cinco minutos sem resposta; por isso o pedido ao OmniVoice usa `patientFetch` (`server/voicestudio.ts`), com limite total de 45 minutos.
+- Cada voz clonada usada fica na memória do backend, e com o limite de 6 GB cabem duas. Por isso só dois estilos estão ligados. Na terceira voz o backend recusa com "Not enough free memory" até ser reiniciado (`docker restart omnivoice`). Os perfis `Xilo Notícia` e `Xilo Documentário` existem no VoiceStudio, mas o Xilo não os usa.
 - A imagem tem 11,5 GB e os modelos somam cerca de 6 GB. Confira o espaço do disco do Docker antes de atualizar (`docker system df`).
 - A interface do VoiceStudio fica em http://127.0.0.1:3900 (Model Catalogue, licenças, verificação do sistema).
 

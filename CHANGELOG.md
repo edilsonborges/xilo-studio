@@ -4,6 +4,23 @@ Todas as mudanças relevantes do Xilo Studio ficam registradas aqui. O formato
 segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões
 seguem o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.8.3] - 2026-11-18
+
+### Adicionado
+
+- Os estilos Natural e Conto do VoiceStudio voltam a aparecer onde ele roda
+  sem placa de vídeo. Ali eles são vozes clonadas a partir das amostras de
+  cada estilo, então o timbre lembra o original sem ser idêntico.
+- Esses dois estilos têm as mesmas qualidades Rápida e Máxima, com barra de
+  andamento. Voz clonada demora mais que a voz padrão do VoiceStudio, e a
+  espera prevista já mostra isso antes de você começar.
+
+### Corrigido
+
+- Narração do VoiceStudio que levava mais de cinco minutos para entregar a
+  primeira frase falhava com "O VoiceStudio não respondeu". Agora o Xilo
+  espera.
+
 ## [0.8.2] - 2026-11-18
 
 ### Adicionado

@@ -1,4 +1,7 @@
 import type { Narrator } from './narration.js';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { Readable } from 'node:stream';
 
 export const VOICESTUDIO_ID = 'voicestudio-pt-br';
 
@@ -86,11 +89,26 @@ export const STUDIO_QUALITIES = [
 ] as const;
 export type StudioQuality = (typeof STUDIO_QUALITIES)[number]['id'];
 
+/**
+ * Estilos que o OmniVoice imita por clonagem, a partir de um perfil de voz
+ * criado no VoiceStudio com a amostra do estilo. Só dois: cada voz clonada
+ * ocupa memória no backend, e mais que isso não cabe no servidor de produção.
+ */
+export const STUDIO_CLONES = [
+  { id: VOICESTUDIO_ID, profile: 'Xilo Natural' },
+  { id: 'voicestudio-conto', profile: 'Xilo Conto' },
+] as const;
+/** Voz clonada custa cerca de 2,5 vezes a voz padrão (medido: 28 s contra 11 s por segundo de áudio). */
+export const CLONE_SLOWDOWN = 2.5;
+export const studioClone = (id: string) => STUDIO_CLONES.find((clone) => clone.id === id);
+
 export interface StudioState {
   /** o VoiceStudio respondeu */
   up: boolean;
   /** tem o motor mlx-audio (Kokoro): valem os quatro estilos da 0.8.0 */
   kokoro: boolean;
+  /** sem Kokoro: estilos que têm perfil de voz criado no VoiceStudio */
+  clones?: string[];
 }
 
 /**
@@ -101,12 +119,29 @@ export function createStudioProbe(config: VoiceStudioConfig, request = fetch, no
   let checkedAt = -Infinity;
   let state: StudioState = { up: false, kokoro: false };
   let pending: Promise<StudioState> | null = null;
+  const headers: Record<string, string> = config.key ? { Authorization: `Bearer ${config.key}` } : {};
+  /** Estilos cujo perfil de voz existe no VoiceStudio; qualquer falha vale como "nenhum". */
+  const listClones = async (): Promise<string[]> => {
+    try {
+      const response = await request(new URL('/profiles', config.url), { signal: AbortSignal.timeout(3_000), redirect: 'manual', headers });
+      if (!response.ok) {
+        await response.body?.cancel();
+        return [];
+      }
+      const profiles = await response.json() as Array<{ name?: unknown }>;
+      if (!Array.isArray(profiles)) return [];
+      const names = new Set(profiles.map((profile) => profile?.name));
+      return STUDIO_CLONES.filter((clone) => names.has(clone.profile)).map((clone) => clone.id);
+    } catch {
+      return [];
+    }
+  };
   return () => {
     if (now() - checkedAt < 60_000) return Promise.resolve(state);
     pending ??= request(new URL('/engines/tts', config.url), {
       signal: AbortSignal.timeout(3_000),
       redirect: 'manual',
-      headers: config.key ? { Authorization: `Bearer ${config.key}` } : {},
+      headers,
     })
       .then(async (response): Promise<StudioState> => {
         // respondeu, mas não deu a lista de motores: trata como a instalação da 0.8.0
@@ -116,7 +151,8 @@ export function createStudioProbe(config: VoiceStudioConfig, request = fetch, no
         }
         const body = await response.json().catch(() => null) as { backends?: Array<{ id?: string; available?: boolean }> } | null;
         if (!Array.isArray(body?.backends)) return { up: true, kokoro: true };
-        return { up: true, kokoro: body.backends.some((engine) => engine.id === 'mlx-audio' && engine.available === true) };
+        if (body.backends.some((engine) => engine.id === 'mlx-audio' && engine.available === true)) return { up: true, kokoro: true };
+        return { up: true, kokoro: false, clones: await listClones() };
       }, (): StudioState => ({ up: false, kokoro: false }))
       .then((result) => {
         state = result;
@@ -133,13 +169,41 @@ export const estimateAudioSeconds = (text: string, rate: number): number =>
   Math.max(1, text.trim().split(/\s+/).filter(Boolean).length / 2.3 / rate);
 
 /**
+ * `fetch` sem prazo para a resposta começar. O do Node desiste depois de cinco
+ * minutos sem cabeçalhos ou sem dados, e o OmniVoice em CPU só responde quando
+ * a primeira frase fica pronta, o que pode passar disso. O prazo fica por conta
+ * do `signal` de quem chama.
+ */
+export const patientFetch = ((input: URL | string, init: RequestInit = {}) => new Promise<Response>((resolve, reject) => {
+  const url = new URL(String(input));
+  const outgoing = (url.protocol === 'https:' ? httpsRequest : httpRequest)(url, {
+    method: init.method ?? 'GET',
+    headers: init.headers as Record<string, string> | undefined,
+    signal: init.signal ?? undefined,
+  }, (incoming) => {
+    const status = incoming.statusCode ?? 502;
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(incoming.headers)) {
+      if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(', ') : value);
+    }
+    const empty = status === 204 || status === 304 || status < 200;
+    if (empty) incoming.resume();
+    resolve(new Response(empty ? null : Readable.toWeb(incoming) as ReadableStream<Uint8Array>, { status: Math.max(200, status), headers }));
+  });
+  outgoing.on('error', reject);
+  outgoing.end(typeof init.body === 'string' ? init.body : undefined);
+})) as typeof fetch;
+
+/**
  * Narração pelo motor OmniVoice. Um pedido só, para a voz não mudar no meio; o
  * áudio chega aos poucos (frase a frase), o que dá o andamento real.
  * O backend não interrompe uma fala já começada: abandonar o pedido não libera
  * o processador, então quem chama deve esperar o fim mesmo ao cancelar.
  */
-export function createOmniVoice(config: VoiceStudioConfig, request = fetch): Narrator {
-  return async ({ text, rate, quality, onProgress, signal }) => {
+export function createOmniVoice(config: VoiceStudioConfig, request: typeof fetch = patientFetch): Narrator {
+  return async ({ text, rate, voice, quality, onProgress, signal }) => {
+    // estilo clonado: o perfil de voz dá o timbre; sem perfil, a voz padrão do motor
+    const profile = studioClone(voice)?.profile;
     const steps = STUDIO_QUALITIES.find((q) => q.id === quality)?.steps ?? STUDIO_QUALITIES[0].steps;
     const limit = AbortSignal.timeout(45 * 60_000);
     const chunks: Buffer[] = [];
@@ -158,6 +222,7 @@ export function createOmniVoice(config: VoiceStudioConfig, request = fetch): Nar
         body: JSON.stringify({
           input, model: 'omnivoice', language: 'pt-BR', speed: rate,
           response_format: 'pcm', stream_format: 'audio', num_step: steps,
+          ...(profile ? { voice: profile } : {}),
           ...(parts.length > 1 ? { seed } : {}),
         }),
         signal: signal ? AbortSignal.any([signal, limit]) : limit,

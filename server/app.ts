@@ -7,7 +7,7 @@ import { createResendMailer, inviteEmail, resetEmail, type Mailer } from './mail
 import { createGateway, type AiOutcome, type Gateway } from './ai.js';
 import {
   createOmniVoice, createStudioProbe, createVoiceStudio, estimateAudioSeconds, studioStyle,
-  OMNIVOICE_ID, STUDIO_QUALITIES, VOICESTUDIO_ID, type StudioState,
+  CLONE_SLOWDOWN, OMNIVOICE_ID, STUDIO_QUALITIES, VOICESTUDIO_ID, type StudioState,
 } from './voicestudio.js';
 import { VOICES, edgeNarrator, type Narration, type Narrator } from './narration.js';
 import { validPasswordInput } from './password.js';
@@ -379,11 +379,13 @@ export function createApp(options: AppOptions = {}): express.Express {
     const state = await studioState();
     const edge = VOICES.filter((voice) => isEdge(voice.id));
     // com Kokoro (mlx-audio): os quatro estilos, e o VoiceStudio é a voz inicial.
-    // só com OmniVoice (CPU, lento): uma voz, depois das do Edge, que é a inicial.
+    // só com OmniVoice (CPU, lento): depois das do Edge, que é a inicial, vêm a voz
+    // padrão do motor e os estilos que têm perfil de voz clonada.
     // fora do ar: só o Edge.
+    const clones = state.clones ?? [];
     const voices = !state.up ? edge
       : state.kokoro ? VOICES.filter((voice) => voice.id !== OMNIVOICE_ID)
-        : [...edge, ...VOICES.filter((voice) => voice.id === OMNIVOICE_ID)];
+        : [...edge, ...VOICES.filter((voice) => voice.id === OMNIVOICE_ID), ...VOICES.filter((voice) => clones.includes(voice.id))];
     res.json({
       voices,
       maxChars: MAX_NARRATION_CHARS,
@@ -391,7 +393,12 @@ export function createApp(options: AppOptions = {}): express.Express {
       defaultVoice: state.up && state.kokoro ? VOICESTUDIO_ID : EDGE_DEFAULT,
       // qualidades e custo estimado só existem no modo OmniVoice
       studio: state.up && !state.kokoro
-        ? { voice: OMNIVOICE_ID, qualities: STUDIO_QUALITIES.map(({ id, label, ratio }) => ({ id, label, ratio })) }
+        ? {
+          voice: OMNIVOICE_ID,
+          // vozes lentas e quanto cada uma multiplica a espera
+          voices: Object.fromEntries([[OMNIVOICE_ID, 1], ...clones.map((id) => [id, CLONE_SLOWDOWN])]),
+          qualities: STUDIO_QUALITIES.map(({ id, label, ratio }) => ({ id, label, ratio })),
+        }
         : null,
     });
   });
@@ -408,10 +415,12 @@ export function createApp(options: AppOptions = {}): express.Express {
     const user = res.locals.user as User;
     const state = await studioState();
     const voice = parsed.data.voice ?? (state.up && state.kokoro ? VOICESTUDIO_ID : EDGE_DEFAULT);
-    const isOmni = voice === OMNIVOICE_ID;
+    // sem Kokoro, um estilo com perfil de voz clonada também sai pelo OmniVoice
+    const isClone = !state.kokoro && Boolean(state.clones?.includes(voice));
+    const isOmni = voice === OMNIVOICE_ID || isClone;
     const isStudio = isOmni || Boolean(studioStyle(voice));
     // cada voz do VoiceStudio depende do motor que o backend tem
-    if (isStudio && (!state.up || (isOmni ? state.kokoro : !state.kokoro))) {
+    if (isStudio && (!state.up || (voice === OMNIVOICE_ID ? state.kokoro : !state.kokoro && !isClone))) {
       res.status(503).json({ error: 'Esta voz do VoiceStudio não está disponível neste servidor. Escolha outra voz.' });
       return;
     }
@@ -437,7 +446,7 @@ export function createApp(options: AppOptions = {}): express.Express {
     const quality = isOmni ? parsed.data.quality ?? 'fast' : undefined;
     const job: VoiceJob = {
       owner: user.id, done: 0, total: estimateAudioSeconds(parsed.data.text, parsed.data.rate), startedAt: now(),
-      ratio: STUDIO_QUALITIES.find((q) => q.id === quality)?.ratio ?? STUDIO_QUALITIES[0].ratio,
+      ratio: (STUDIO_QUALITIES.find((q) => q.id === quality)?.ratio ?? STUDIO_QUALITIES[0].ratio) * (isClone ? CLONE_SLOWDOWN : 1),
     };
     const generate = async () => {
       const result = await narrator({
