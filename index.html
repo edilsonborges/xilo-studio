@@ -48,9 +48,10 @@
               <label for="script">1. Roteiro</label>
               <span class="field-actions">
                 <button class="link" id="use-sample" type="button" title="Cada clique escreve uma história diferente">Usar exemplo</button>
-                <button class="link" id="improve" type="button" title="Reescreve o seu texto, mais visual e no tamanho da duração escolhida">Melhorar texto</button>
+                <button class="link" id="improve" type="button" aria-describedby="improve-note" title="Reescreve o seu texto, mais visual e no tamanho da duração escolhida">Melhorar texto</button>
               </span>
             </div>
+            <p class="hint" id="improve-note" role="status" hidden></p>
             <textarea
               id="script"
               rows="9"
@@ -71,26 +72,54 @@
           </div>
 
           <div class="field">
-            <div class="field-head"><label for="tts-voice">2. Narração</label></div>
+            <div class="field-head"><label for="voice-button">2. Narração</label></div>
             <div class="tts" id="tts">
-              <select id="tts-voice" aria-label="Voz da narração"></select>
-              <select id="tts-rate" aria-label="Velocidade da fala">
+              <button class="style-button picker-wide" type="button" id="voice-button" aria-haspopup="dialog" disabled>Voz da narração</button>
+              <select hidden id="tts-voice" aria-label="Voz da narração"></select>
+              <button class="style-button picker-wide" type="button" id="rate-button" aria-haspopup="dialog"></button>
+              <select hidden id="tts-rate" aria-label="Velocidade da fala">
                 <option value="0.85">Mais lenta</option>
                 <option value="0.95">Um pouco lenta</option>
                 <option value="1">Normal</option>
                 <option value="1.1">Um pouco rápida</option>
                 <option value="1.2">Mais rápida</option>
               </select>
-              <button class="btn" id="tts-generate" type="button">Gerar voz do roteiro</button>
             </div>
-            <p class="hint tts-hint">Voz neural do Edge TTS, sem chave. A legenda acompanha cada palavra no tempo exato.</p>
+            <div class="narration-playback" id="narration-playback" hidden>
+              <div class="playback-heading">
+                <button id="version-button" class="playback-version" type="button" aria-haspopup="dialog" title="Escolher narração para o vídeo" disabled><strong id="listen-title"></strong></button>
+                <select hidden id="narration-version" aria-label="Narração para o vídeo"></select>
+                <button class="link" id="switch-listen" type="button" hidden></button>
+              </div>
+              <div class="audio-transport">
+                <audio id="narration-player" controls preload="metadata" aria-labelledby="listen-title"></audio>
+                <div class="audio-controls" id="listen-controls" role="group" aria-labelledby="listen-title" hidden>
+                  <button class="btn btn-icon btn-primary" id="listen-play" type="button" aria-label="Reproduzir áudio" aria-controls="narration-player"><span aria-hidden="true">▶</span></button>
+                  <div class="audio-position">
+                    <input id="listen-seek" type="range" min="0" max="0" step="0.1" value="0" aria-label="Posição no áudio" disabled />
+                    <span class="audio-time" id="listen-time">0:00 / 0:00</span>
+                  </div>
+                  <div class="audio-volume">
+                    <button class="btn" type="button" id="listen-mute" aria-label="Silenciar áudio" aria-pressed="false">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path fill="currentColor" d="M3 9h4l5-4v14l-5-4H3z"/><path class="sound-on" d="M16 8q4 4 0 8m3-11q7 7 0 14"/><path class="sound-off" d="m16 9 6 6m0-6-6 6"/></svg>
+                    </button>
+                    <input id="listen-volume" type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume do áudio" />
+                  </div>
+                </div>
+                <a class="btn" id="audio-download" aria-label="Baixar a narração selecionada" title="Baixar a narração selecionada" hidden>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></svg>
+                </a>
+              </div>
+            </div>
+            <div class="narration-actions">
+              <button class="btn btn-primary" id="tts-generate" type="button">Gerar narração</button>
+            </div>
             <p class="or"><span>ou envie seu áudio (.mp3 ou .wav)</span></p>
             <label class="dropzone" id="dropzone" for="audio">
               <input id="audio" type="file" accept="audio/mpeg,audio/wav,audio/x-wav,audio/*,.mp3,.wav" />
               <strong id="audio-name">Clique ou arraste o áudio</strong>
               <span id="audio-meta">O arquivo não sai do seu navegador</span>
             </label>
-            <a class="link" id="audio-download" hidden>Baixar a narração (.mp3)</a>
           </div>
 
           <div class="field">
@@ -138,8 +167,13 @@
             <span class="time" id="time">0:00.0 / 0:00.0</span>
           </div>
 
-          <div class="export">
+          <div class="preview-captions">
             <label class="check"><input id="captions" type="checkbox" checked /> Legendas</label>
+            <button class="style-button picker-wide" id="caption-button" type="button" aria-haspopup="dialog"></button>
+            <select hidden id="caption-style" aria-label="Estilo da legenda"></select>
+          </div>
+
+          <div class="export">
             <select id="format" aria-label="Formato do vídeo">
               <option value="auto">Formato automático</option>
               <option value="mp4">MP4 (H.264)</option>
@@ -156,6 +190,18 @@
       </main>
     </div>
 
+    <dialog id="replace-narration" aria-labelledby="replace-title" aria-describedby="replace-message">
+      <form method="dialog">
+        <h2 id="replace-title">Substituir a narração mais antiga?</h2>
+        <p id="replace-message"></p>
+        <label class="check"><input type="checkbox" id="skip-replace-warning" /> Não perguntar novamente neste navegador</label>
+        <div class="dialog-actions">
+          <button class="btn" value="cancel" autofocus>Cancelar</button>
+          <button class="btn btn-primary" value="replace">Substituir mais antiga</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="settings">
       <form method="dialog" id="settings-form">
         <h2>Configurações</h2>
@@ -166,7 +212,13 @@
         </p>
 
         <fieldset>
-          <legend>Timestamps da narração</legend>
+          <legend>Narração</legend>
+          <label>Ao atingir três versões
+            <select name="narrationReplacement">
+              <option value="ask">Perguntar antes de substituir</option>
+              <option value="replace">Substituir a mais antiga automaticamente</option>
+            </select>
+          </label>
           <label>Origem
             <select name="transcription">
               <option value="local">Alinhador local (sem chave)</option>

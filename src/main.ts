@@ -1,7 +1,9 @@
 import './style.css';
 
 import { createTimeline, decodeAudioFile } from './audio';
-import { listVoices, narrate, type GeneratedNarration } from './audio/edge';
+import { appendTake, HISTORY_LIMIT, openNarrationHistory, type NarrationTake } from './audio/history';
+import { initNarrationPlayer } from './audio/player';
+import { listVoices, narrate } from './audio/narration';
 import { logEvent } from './auth/api';
 import { initSession } from './auth/session';
 import { initVersionModal } from './version';
@@ -18,7 +20,9 @@ import type { SceneGraphJSON, Timeline } from './types';
 import { formatTime } from './util';
 import { imagePrompt, storyboard, type IllustrationStyle } from './illustrated/director';
 import { IllustratedEngine } from './illustrated/engine';
-import { initStylePicker } from './stylepicker';
+import { CAPTION_STYLES, captionStyle } from './compositor/captions';
+import { captionPreview, textPreview, voicePreview } from './pickerpreviews';
+import { bindPickerDialog, initStylePicker } from './stylepicker';
 import { DEFAULT_SECONDS, MAX_SECONDS, MIN_SECONDS, estimateSeconds, formatDuration, improveScript, joinSuggestion, sampleStory, splitSuggestion } from './writer';
 
 
@@ -32,6 +36,7 @@ const ui = {
   script: $<HTMLTextAreaElement>('script'),
   useSample: $<HTMLButtonElement>('use-sample'),
   improve: $<HTMLButtonElement>('improve'),
+  improveNote: $('improve-note'),
   suggestion: $('suggestion'),
   acceptSuggestion: $<HTMLButtonElement>('accept-suggestion'),
   discardSuggestion: $<HTMLButtonElement>('discard-suggestion'),
@@ -39,6 +44,11 @@ const ui = {
   durationLabel: $('duration-label'),
   durationHint: $('duration-hint'),
   styleButton: $<HTMLButtonElement>('style-button'),
+  captionStyle: $<HTMLSelectElement>('caption-style'),
+  captionButton: $<HTMLButtonElement>('caption-button'),
+  versionButton: $<HTMLButtonElement>('version-button'),
+  voiceButton: $<HTMLButtonElement>('voice-button'),
+  rateButton: $<HTMLButtonElement>('rate-button'),
   audio: $<HTMLInputElement>('audio'),
   dropzone: $<HTMLLabelElement>('dropzone'),
   audioName: $('audio-name'),
@@ -47,6 +57,14 @@ const ui = {
   ttsVoice: $<HTMLSelectElement>('tts-voice'),
   ttsRate: $<HTMLSelectElement>('tts-rate'),
   ttsGenerate: $<HTMLButtonElement>('tts-generate'),
+  version: $<HTMLSelectElement>('narration-version'),
+  listen: $<HTMLAudioElement>('narration-player'),
+  playback: $('narration-playback'),
+  listenTitle: $('listen-title'),
+  switchListen: $<HTMLButtonElement>('switch-listen'),
+  replace: $<HTMLDialogElement>('replace-narration'),
+  replaceMessage: $('replace-message'),
+  skipWarning: $<HTMLInputElement>('skip-replace-warning'),
   generate: $<HTMLButtonElement>('generate'),
   status: $<HTMLOListElement>('status'),
   json: $<HTMLTextAreaElement>('json'),
@@ -92,10 +110,17 @@ interface Project {
 let audioFile: File | null = null;
 let audioBuffer: AudioBuffer | null = null;
 let audioUrl: string | null = null;
-/** narração gerada pelo Edge TTS, com o tempo exato de cada palavra */
-let narrated: GeneratedNarration | null = null;
+/** narração gerada no servidor, com tempos por palavra quando disponíveis */
+let narrated: NarrationTake | null = null;
+let takes: NarrationTake[] = [];
+let history: Awaited<ReturnType<typeof openNarrationHistory>> | undefined;
+let uploaded: File | null = null;
+let loadingAudio = false;
+let initializingAudio = true;
 let downloadUrl: string | null = null;
 let narrating = false;
+let listeningToSample = true;
+const voiceSamples = import.meta.glob('./assets/vozes/*.mp3', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
 /** gerar de novo o mesmo roteiro pede outra versão: o número sobe a cada vez */
 let lastDirected = '';
 let variation = 0;
@@ -122,7 +147,7 @@ function addStatus(message: string, kind: StatusKind = 'info'): HTMLLIElement {
 }
 
 function updateBadge(): void {
-  const stamps = narrated && narrated.file === audioFile
+  const stamps = narrated?.words.length && narrated.file === audioFile
     ? 'Edge TTS'
     : settings.transcription === 'openai' && settings.openaiKey.trim() ? 'Whisper' : 'alinhador local';
   const director = settings.llmProvider === 'xilo' ? 'IA do Xilo' : settings.llmProvider;
@@ -138,11 +163,20 @@ function updateBadge(): void {
 function refreshControls(): void {
   const ready = project !== null;
   const locked = busy || exporting !== null;
-  ui.generate.disabled = locked || narrating;
-  ui.ttsGenerate.disabled = locked || narrating;
+  const audioLocked = locked || narrating || loadingAudio || initializingAudio;
+  ui.generate.disabled = audioLocked;
+  ui.ttsGenerate.disabled = audioLocked || !ui.ttsVoice.value;
+  ui.ttsGenerate.textContent = narrating ? 'Gerando voz…' : takes.length ? 'Regenerar narração' : 'Gerar narração';
+  ui.version.disabled = audioLocked;
+  ui.versionButton.disabled = audioLocked || listeningToSample || ui.version.options.length < 2;
+  ui.voiceButton.disabled = ui.ttsVoice.disabled = audioLocked || !ui.ttsVoice.value;
+  ui.rateButton.disabled = ui.ttsRate.disabled = audioLocked;
+  ui.captionButton.disabled = ui.captionStyle.disabled = exporting !== null || !ui.captions.checked;
+  ui.captions.disabled = exporting !== null;
+  ui.audio.disabled = audioLocked;
   ui.play.disabled = !ready || locked;
   ui.seek.disabled = !ready || locked;
-  ui.exportBtn.disabled = !ready || locked;
+  ui.exportBtn.disabled = !ready || audioLocked;
   ui.applyJson.disabled = !ready || locked;
   ui.cancelExport.hidden = exporting === null;
   ui.progress.hidden = exporting === null;
@@ -154,6 +188,7 @@ function ensureCompositor(source: FrameSource): Compositor {
   if (!compositor) {
     compositor = new Compositor(source, ui.stage);
     compositor.accent = settings.captionAccent;
+    compositor.captionStyle = settings.captionStyle;
     compositor.showCaptions = ui.captions.checked;
   } else {
     compositor.setSource(source);
@@ -220,51 +255,127 @@ ui.seek.addEventListener('input', () => {
 
 ui.captions.addEventListener('change', () => {
   if (compositor) compositor.showCaptions = ui.captions.checked;
+  refreshControls();
   dirty = true;
 });
 
 document.addEventListener('keydown', (ev) => {
   const target = ev.target as HTMLElement;
   if (ev.code !== 'Space' || !project || exporting || busy) return;
-  if (['TEXTAREA', 'INPUT', 'SELECT', 'BUTTON'].includes(target.tagName) || ui.settings.open) return;
+  if (['TEXTAREA', 'INPUT', 'SELECT', 'BUTTON', 'AUDIO'].includes(target.tagName) || document.querySelector('dialog[open]')) return;
   ev.preventDefault();
   setPlaying(player.paused || player.ended);
 });
 
 // ---------- áudio ----------
 
-async function loadAudio(file: File, generated: GeneratedNarration | null = null): Promise<void> {
-  audioFile = file;
-  audioBuffer = null;
-  narrated = generated;
-  if (downloadUrl) URL.revokeObjectURL(downloadUrl);
-  downloadUrl = generated ? URL.createObjectURL(file) : null;
-  ui.audioDownload.hidden = !downloadUrl;
-  if (downloadUrl) {
-    ui.audioDownload.href = downloadUrl;
-    ui.audioDownload.download = file.name;
+function takeLabel(take: NarrationTake): string {
+  const voice = take.voiceLabel.replace(/^VoiceStudio · /u, '');
+  return `Versão ${take.number} · ${voice} · ${take.rate}× · ${formatTime(take.duration)}`;
+}
+
+function renderVersions(): void {
+  const options = takes.slice().reverse().map(take => {
+    const option = new Option(takeLabel(take), take.id);
+    option.dataset.title = `Versão ${take.number}`;
+    option.dataset.detail = `${take.voiceLabel} · ${take.rate}×`;
+    option.dataset.duration = formatTime(take.duration);
+    return option;
+  });
+  if (uploaded) options.push(new Option(`Áudio enviado · ${uploaded.name}`, 'upload'));
+  ui.version.replaceChildren(...options);
+  ui.version.value = narrated?.id ?? 'upload';
+}
+
+function showPlayback(sample: boolean): void {
+  const voice = ui.ttsVoice.selectedOptions[0];
+  const sampleUrl = voice && voiceSamples[`./assets/vozes/${voice.value}.mp3`];
+  listeningToSample = Boolean(sampleUrl && (sample || !downloadUrl));
+  const source = listeningToSample ? sampleUrl : downloadUrl;
+  ui.playback.hidden = !source;
+  refreshControls();
+  ui.switchListen.hidden = !downloadUrl || !sampleUrl;
+  ui.switchListen.textContent = listeningToSample ? 'Voltar à narração' : 'Ouvir amostra da voz';
+  ui.audioDownload.hidden = listeningToSample || !narrated;
+  if (!source) return;
+  ui.listenTitle.textContent = listeningToSample
+    ? `Amostra da voz · ${voice.dataset.title || voice.text}`
+    : narrated ? `Sua narração · Versão ${narrated.number}` : `Seu áudio · ${audioFile?.name}`;
+  if (ui.listen.getAttribute('src') !== source) {
+    ui.listen.pause();
+    ui.listen.src = source;
   }
-  updateBadge();
+  const rate = listeningToSample ? Number(ui.ttsRate.value) || 1 : 1;
+  ui.listen.defaultPlaybackRate = rate;
+  ui.listen.playbackRate = rate;
+}
+
+ui.switchListen.addEventListener('click', () => {
+  showPlayback(!listeningToSample);
+  if (listeningToSample) void ui.listen.play().catch(() => { /* Os controles permitem tentar de novo. */ });
+});
+
+function selectAudio(file: File, buffer: AudioBuffer, take: NarrationTake | null): void {
+  if (project && project.file !== file) {
+    player.pause();
+    player.removeAttribute('src');
+    player.load();
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    audioUrl = null;
+    project = null;
+    ui.stage.getContext('2d')?.clearRect(0, 0, ui.stage.width, ui.stage.height);
+    ui.stageEmpty.hidden = false;
+    ui.jsonDetails.hidden = true;
+    ui.seek.value = '0';
+    updateTime(0);
+  }
+  if (take && (!ui.script.value.trim() || ui.script.value.trim() === narrated?.script)) {
+    ui.script.value = take.script;
+    refreshScriptTools();
+  }
+  audioFile = file;
+  audioBuffer = buffer;
+  narrated = take;
+  if (!take) uploaded = file;
+  ui.listen.pause();
+  if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+  downloadUrl = URL.createObjectURL(file);
+  showPlayback(false);
+  ui.audioDownload.href = downloadUrl;
+  ui.audioDownload.download = take ? `v${take.number}-${file.name}` : file.name;
   ui.audioName.textContent = file.name;
-  ui.audioMeta.textContent = 'Lendo o áudio…';
-  ui.dropzone.classList.remove('loaded');
+  ui.audioMeta.textContent = `${formatTime(buffer.duration)} · ${(file.size / 1048576).toFixed(1)} MB`;
+  ui.dropzone.classList.add('loaded');
+  renderVersions();
+  updateBadge();
+  refreshControls();
+}
+
+async function loadAudio(file: File, take: NarrationTake | null = null): Promise<void> {
+  loadingAudio = true;
+  refreshControls();
   try {
-    const buffer = await decodeAudioFile(file);
-    if (audioFile !== file) return; // o usuário já trocou de arquivo
-    audioBuffer = buffer;
-    ui.audioMeta.textContent = `${formatTime(buffer.duration)} · ${(file.size / 1048576).toFixed(1)} MB`;
-    ui.dropzone.classList.add('loaded');
+    selectAudio(file, await decodeAudioFile(file), take);
   } catch (err) {
-    if (audioFile !== file) return;
-    audioFile = null;
-    ui.audioName.textContent = 'Clique ou arraste o áudio';
-    ui.audioMeta.textContent = (err as Error).message;
+    renderVersions();
+    addStatus((err as Error).message, 'error');
+  } finally {
+    loadingAudio = false;
+    refreshControls();
   }
 }
 
+ui.version.addEventListener('change', () => {
+  const take = takes.find(item => item.id === ui.version.value);
+  if (take) void loadAudio(take.file, take);
+  else if (uploaded) void loadAudio(uploaded);
+});
+ui.listen.addEventListener('play', () => player.pause());
+player.addEventListener('play', () => ui.listen.pause());
+
 ui.audio.addEventListener('change', () => {
   const file = ui.audio.files?.[0];
-  if (file) void loadAudio(file);
+  if (file && !ui.audio.disabled) void loadAudio(file);
 });
 
 for (const type of ['dragenter', 'dragover'] as const) {
@@ -281,31 +392,65 @@ for (const type of ['dragleave', 'drop'] as const) {
 }
 ui.dropzone.addEventListener('drop', (ev) => {
   const file = ev.dataTransfer?.files?.[0];
-  if (file) void loadAudio(file);
+  if (file && !ui.audio.disabled) void loadAudio(file);
 });
 
-// ---------- narração pelo Edge TTS ----------
+// ---------- narração no servidor ----------
 
 async function setupVoices(): Promise<void> {
   ui.ttsRate.value = settings.ttsRate;
   if (!ui.ttsRate.value) ui.ttsRate.value = '1';
+  refreshRatePicker();
   try {
     const { voices } = await listVoices();
-    ui.ttsVoice.replaceChildren(...voices.map((voice) => new Option(voice.label, voice.id)));
+    const groups = new Map<string, HTMLOptGroupElement>();
+    for (const voice of voices) {
+      const provider = voice.id.startsWith('voicestudio-') ? 'VoiceStudio' : 'Edge TTS';
+      let group = groups.get(provider);
+      if (!group) {
+        group = document.createElement('optgroup');
+        group.label = provider;
+        groups.set(provider, group);
+      }
+      const option = new Option(voice.label, voice.id);
+      option.dataset.title = voice.label.replace(/^VoiceStudio · /u, '');
+      group.append(option);
+    }
+    ui.ttsVoice.replaceChildren(...groups.values());
     ui.ttsVoice.value = settings.ttsVoice;
     if (!ui.ttsVoice.value && voices[0]) ui.ttsVoice.value = voices[0].id;
+    refreshVoicePicker();
+    showPlayback(!downloadUrl);
   } catch {
     // Sem servidor (ex.: `npm run dev:web`): some a opção de gerar a voz.
     $('tts').hidden = true;
-    ui.ttsGenerate.closest('.field')?.querySelector('.tts-hint')?.setAttribute('hidden', '');
+    ui.ttsGenerate.hidden = true;
   }
 }
 
 for (const select of [ui.ttsVoice, ui.ttsRate]) {
   select.addEventListener('change', () => {
     settings = { ...settings, ttsVoice: ui.ttsVoice.value, ttsRate: ui.ttsRate.value };
+    showPlayback(true);
     saveSettings(settings);
   });
+}
+
+async function authorizeReplacement(versions: NarrationTake[]): Promise<string | boolean | undefined> {
+  if (versions.length < HISTORY_LIMIT) return undefined;
+  if (settings.narrationReplacement === 'replace') return true;
+  const oldest = versions[0];
+  ui.replaceMessage.textContent = `Você já tem três narrações. A nova vai substituir a ${takeLabel(oldest)}.`;
+  ui.skipWarning.checked = false;
+  ui.replace.returnValue = 'cancel';
+  const closed = new Promise<void>(resolve => ui.replace.addEventListener('close', () => resolve(), { once: true }));
+  ui.replace.showModal();
+  await closed;
+  if (ui.replace.returnValue !== 'replace') return false;
+  if (!ui.skipWarning.checked) return oldest.id;
+  settings = { ...settings, narrationReplacement: 'replace' };
+  saveSettings(settings);
+  return true;
 }
 
 ui.ttsGenerate.addEventListener('click', async () => {
@@ -319,24 +464,56 @@ ui.ttsGenerate.addEventListener('click', async () => {
   }
   narrating = true;
   refreshControls();
-  ui.ttsGenerate.textContent = 'Gerando voz…';
-  const step = addStatus('Gerando a narração com o Edge TTS…');
+  const voice = ui.ttsVoice.value;
+  const voiceLabel = ui.ttsVoice.selectedOptions[0].text;
+  const rate = Number(ui.ttsRate.value) || 1;
+  let step: HTMLLIElement | undefined;
   try {
-    const result = await narrate(script, ui.ttsVoice.value, Number(ui.ttsRate.value) || 1);
-    await loadAudio(result.file, result);
-    step.className = 'ok';
-    step.textContent = 'Narração pronta. Agora é só gerar o vídeo.';
+    let replace = await authorizeReplacement(history ? await history.read() : takes);
+    if (replace === false) return;
+    step = addStatus('Gerando a narração…');
+    const result = await narrate(script, voice, rate);
+    const buffer = await decodeAudioFile(result.file);
+    const input = { ...result, id: crypto.randomUUID(), script, voiceLabel, rate, duration: buffer.duration };
+    for (;;) {
+      const update = history ? await history.add(input, replace) : appendTake(takes, input, replace);
+      if (update.added) {
+        takes = update.takes;
+        selectAudio(update.added.file, buffer, update.added);
+        step.className = 'ok';
+        step.textContent = `Versão ${update.added.number} selecionada para o vídeo.`;
+        break;
+      }
+      // Outra aba preencheu o histórico enquanto o servidor gerava o áudio.
+      replace = await authorizeReplacement(update.takes);
+      if (replace === false) {
+        step.textContent = 'Substituição cancelada.';
+        break;
+      }
+    }
   } catch (err) {
+    if (!step) step = addStatus('');
     step.className = 'error';
     step.textContent = (err as Error).message;
   } finally {
     narrating = false;
-    ui.ttsGenerate.textContent = 'Gerar voz do roteiro';
     refreshControls();
   }
 });
 
-void setupVoices();
+async function restoreNarrations(): Promise<void> {
+  const owner = await initSession();
+  if (!owner) return;
+  try {
+    history = await openNarrationHistory(owner);
+    takes = await history.read();
+    const latest = takes.at(-1);
+    if (latest) await loadAudio(latest.file, latest);
+  } catch {
+    history = undefined;
+    addStatus('O histórico ficará disponível apenas nesta aba porque o armazenamento local está indisponível.', 'warn');
+  }
+}
 
 // ---------- roteiro: exemplo, melhorar texto e duração ----------
 
@@ -353,6 +530,11 @@ function pendingSuggestion(): boolean {
   return true;
 }
 
+function showImproveNote(message: string): void {
+  ui.improveNote.textContent = message;
+  ui.improveNote.hidden = !message;
+}
+
 function refreshScriptTools(): void {
   const target = targetSeconds();
   ui.durationLabel.textContent = formatDuration(target);
@@ -360,7 +542,7 @@ function refreshScriptTools(): void {
   ui.suggestion.hidden = !parts;
   const text = (parts?.original ?? ui.script.value).trim();
   if (!text) {
-    ui.durationHint.textContent = 'O exemplo e o "Melhorar texto" escrevem um roteiro deste tamanho.';
+    ui.durationHint.textContent = ui.improveNote.hidden ? 'O exemplo e o "Melhorar texto" escrevem um roteiro deste tamanho.' : 'Escolha a duração desejada da narração.';
     ui.durationHint.classList.remove('warn');
     return;
   }
@@ -368,7 +550,7 @@ function refreshScriptTools(): void {
   const off = Math.abs(estimate - target) > Math.max(5, target * 0.35);
   ui.durationHint.classList.toggle('warn', off);
   ui.durationHint.textContent = off
-    ? `O seu texto dá cerca de ${formatDuration(estimate)} de narração, ${estimate > target ? 'mais' : 'menos'} que a duração escolhida. "Melhorar texto" ajusta o tamanho.`
+    ? `O seu texto dá cerca de ${formatDuration(estimate)} de narração, ${estimate > target ? 'mais' : 'menos'} que a duração escolhida.${ui.improveNote.hidden ? ' "Melhorar texto" ajusta o tamanho.' : ''}`
     : `O seu texto dá cerca de ${formatDuration(estimate)} de narração.`;
 }
 
@@ -409,7 +591,7 @@ ui.improve.addEventListener('click', async () => {
   const original = (splitSuggestion(ui.script.value)?.original ?? ui.script.value).trim();
   clearStatus();
   if (!original) {
-    addStatus('Escreva ou cole o roteiro antes de melhorar.', 'error');
+    showImproveNote('Escreva ou cole o roteiro antes de melhorar.');
     ui.script.focus();
     return;
   }
@@ -417,11 +599,12 @@ ui.improve.addEventListener('click', async () => {
   ui.improve.textContent = 'Melhorando…';
   try {
     const improved = await improveScript(original, targetSeconds());
+    showImproveNote('');
     ui.script.value = joinSuggestion(original, improved);
     addStatus('Sugestão pronta, abaixo da linha tracejada. Aceite, descarte ou peça outra.', 'ok');
     logEvent('script_improved', 'ok', { duração: formatDuration(targetSeconds()), roteiro: original.slice(0, 700), sugestão: improved.slice(0, 1_500) });
   } catch (err) {
-    addStatus(`Não consegui melhorar o texto: ${(err as Error).message}`, 'error');
+    showImproveNote((err as Error).message);
   } finally {
     ui.improve.disabled = false;
     ui.improve.textContent = 'Melhorar texto';
@@ -445,8 +628,12 @@ ui.discardSuggestion.addEventListener('click', () => {
   ui.script.focus();
 });
 
-// sem a IA do servidor não há como melhorar o texto
-void aiStatus().then((ai) => { ui.improve.hidden = !ai.text; });
+void aiStatus().then(ai => {
+  if (!ai.text && !ui.improve.disabled) {
+    showImproveNote('Melhorar texto precisa da IA de texto, indisponível neste servidor.');
+    refreshScriptTools();
+  }
+});
 refreshScriptTools();
 
 // ---------- geração ----------
@@ -474,6 +661,7 @@ async function generate(): Promise<void> {
   }
 
   busy = true;
+  ui.listen.pause();
   player.pause();
   refreshControls();
   ui.generate.textContent = 'Gerando…';
@@ -651,6 +839,29 @@ for (const category of STYLE_CATEGORIES) {
   }
   ui.videoStyle.append(group);
 }
+const refreshVoicePicker = initStylePicker(ui.ttsVoice, ui.voiceButton, { title: 'Voz da narração', preview: voicePreview });
+const refreshRatePicker = initStylePicker(ui.ttsRate, ui.rateButton, {
+  title: 'Velocidade da fala', preview: option => textPreview(`${option.value.replace('.', ',')}×`),
+});
+bindPickerDialog(ui.version, ui.versionButton, {
+  title: 'Narração para o vídeo', preview: option => textPreview(option.dataset.duration ?? '♪'),
+});
+for (const style of CAPTION_STYLES) {
+  const option = new Option(style.label, style.id);
+  option.dataset.detail = style.description;
+  ui.captionStyle.append(option);
+}
+ui.captionStyle.value = settings.captionStyle;
+const refreshCaptionPicker = initStylePicker(ui.captionStyle, ui.captionButton, {
+  title: 'Estilo da legenda', preview: option => captionPreview(option, settings.captionAccent),
+});
+ui.captionStyle.addEventListener('change', () => {
+  settings = { ...settings, captionStyle: captionStyle(ui.captionStyle.value) };
+  saveSettings(settings);
+  if (compositor) compositor.captionStyle = settings.captionStyle;
+  dirty = true;
+});
+
 ui.videoStyle.value = settings.videoStyle;
 initStylePicker(ui.videoStyle, ui.styleButton);
 ui.videoStyle.addEventListener('change', () => {
@@ -691,6 +902,7 @@ async function runExport(): Promise<void> {
     addStatus('Este navegador não grava nesse formato. Escolha o formato automático.', 'error');
     return;
   }
+  ui.listen.pause();
   player.pause();
   const controller = new AbortController();
   exporting = controller;
@@ -771,12 +983,14 @@ ui.settingsForm.addEventListener('submit', () => {
   settings = next as Settings;
   saveSettings(settings);
   if (compositor) compositor.accent = settings.captionAccent;
+  refreshCaptionPicker();
   dirty = true;
   updateBadge();
 });
 
 // ---------- início ----------
 
+initNarrationPlayer(ui.listen);
 updateBadge();
 refreshControls();
 requestAnimationFrame(frame);
@@ -793,5 +1007,8 @@ if (import.meta.env.DEV) {
   });
 }
 
-void initSession();
+void Promise.all([restoreNarrations(), setupVoices()]).finally(() => {
+  initializingAudio = false;
+  refreshControls();
+});
 initVersionModal();

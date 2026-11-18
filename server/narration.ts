@@ -2,9 +2,11 @@
 // Roda no servidor porque o serviço só aceita a identificação do navegador Edge;
 // a página não consegue chamá-lo direto. É um serviço não oficial e pode mudar.
 
+import { STUDIO_STYLES } from './voicestudio.js';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 
 export const VOICES = [
+  ...STUDIO_STYLES.map(({ id, label }) => ({ id, label })),
   { id: 'pt-BR-AntonioNeural', label: 'Antonio (masculina)' },
   { id: 'pt-BR-FranciscaNeural', label: 'Francisca (feminina)' },
   { id: 'pt-BR-ThalitaMultilingualNeural', label: 'Thalita (feminina, multilíngue)' },
@@ -27,6 +29,7 @@ export interface SpokenWord {
 
 export interface Narration {
   audio: Buffer;
+  mimeType?: 'audio/wav' | 'audio/mpeg';
   words: SpokenWord[];
 }
 

@@ -50,14 +50,14 @@ npm run build      # checa os tipos (app e servidor) e gera dist/
 npm test           # testes do servidor de contas
 npm run check      # testes + build
 npm run typecheck  # só a checagem de tipos
-npm run narrar     # gera a narração com o Edge TTS (veja abaixo)
+npm run narrar     # gera a narração com o VoiceStudio (veja abaixo)
 ```
 
 ## Exemplo de uso
 
 1. Clique em **Usar exemplo** (ou cole o seu roteiro).
-2. Envie o áudio com a narração desse texto.
-3. Clique em **Gerar vídeo**. O preview 9:16 começa a tocar com a narração.
+2. Em **Narração**, escolha a voz e clique em **Gerar narração**, ou arraste um arquivo para a área de áudio. Ouça o resultado no player.
+3. Escolha o **Estilo do vídeo** e clique em **Gerar vídeo**. A prévia vertical começa a tocar com a narração.
 4. Arraste a linha do tempo à vontade: o mesmo instante mostra sempre o mesmo
    frame.
 5. Escolha o formato e clique em **Exportar vídeo**. O arquivo é baixado ao
@@ -117,40 +117,37 @@ assinatura do ChatGPT. Ninguém precisa de chave no navegador. Configure
 As chaves próprias (OpenAI, Gemini, Anthropic) em **Configurações** continuam
 funcionando como alternativa para dirigir o 3D.
 
-## Gerar a narração com o Edge TTS
+## Gerar a narração
 
-Se você não tem uma narração gravada, o Xilo cria uma com as vozes neurais do
-Microsoft Edge (Read Aloud). Não precisa de chave nem de conta.
+Em **Narração**, selecione a voz e a velocidade e clique em **Gerar narração**. A voz inicial é Dora, em português brasileiro, pelo VoiceStudio com Kokoro. O app gera WAV e usa o alinhador escolhido nas configurações. As vozes do Edge geram MP3 com os tempos de cada palavra. O limite do app é de 6.000 caracteres por roteiro e 20 narrações a cada 15 minutos por pessoa. [Configuração do VoiceStudio](docs/OPERACAO.md#narração-com-voicestudio)
 
-**No app:** no passo 2, escolha a voz e a velocidade e clique em **Gerar voz do
-roteiro**. O servidor do Xilo chama o Edge TTS e devolve o `.mp3` junto com o
-tempo exato de cada palavra, então a legenda não depende do alinhador nem do
-Whisper. Dá para baixar o `.mp3` gerado. Limite: 6.000 caracteres por roteiro e
-20 narrações a cada 15 minutos por pessoa.
+Os seletores de voz, velocidade e versão de áudio abrem uma grade de cartões, como o seletor de estilo do vídeo. Ouça uma amostra antes de gerar. O mesmo player toca o áudio enviado ou a versão selecionada da narração. Na prévia do vídeo, abaixo de **Legendas**, escolha entre Pílula, Cinema, Manchete, Cordel e Palavra em foco. A troca aparece na prévia e vale para a próxima exportação.
 
-**No terminal:** o script `narrar` faz o mesmo e salva o arquivo.
+O player permite ouvir a narração antes de gerar o vídeo. Use **Regenerar narração** para criar até três versões e clique no título do player para escolher qual usar no vídeo. O histórico fica neste navegador, separado por conta. Ao gerar a quarta, você escolhe se quer substituir a mais antiga. A preferência pode ser alterada em **Configurações > Narração**.
+
+No terminal, o comando salva a narração no diretório atual.
 
 ```bash
 npm run narrar -- roteiro.txt
 npm run narrar -- roteiro.txt --voz pt-BR-FranciscaNeural --saida narracao.mp3
-npm run narrar -- roteiro.txt --velocidade 0.95 --tom -5Hz
+npm run narrar -- roteiro.txt --velocidade 0.95
 npm run narrar -- --vozes          # lista as vozes pt-BR
 npm run narrar -- --vozes en-US    # lista as vozes de outro idioma
 ```
 
-O resultado é um `.mp3` (padrão: `narracao.mp3`, ignorado pelo git). Envie esse
-arquivo no app junto com o mesmo roteiro.
+O nome de saída padrão é `narracao.wav` para VoiceStudio e `narracao.mp3` para Edge.
 
 | Voz pt-BR | Timbre |
 |---|---|
-| `pt-BR-AntonioNeural` (padrão) | masculina |
+| `voicestudio-pt-br` (padrão) | Natural, Dora |
+| `voicestudio-noticia` | Notícia, Alex com ritmo rápido |
+| `voicestudio-conto` | Conto, Santa com ritmo pausado |
+| `voicestudio-documentario` | Documentário, mistura de Dora e Alex |
+| `pt-BR-AntonioNeural` | masculina |
 | `pt-BR-FranciscaNeural` | feminina |
 | `pt-BR-ThalitaMultilingualNeural` | feminina, multilíngue |
 
-A síntese roda sempre em Node (no servidor do Xilo ou no script): o serviço do
-Edge só aceita conexões com a identificação do navegador Edge, então a página
-não consegue chamá-lo direto. É um serviço não oficial da Microsoft e pode mudar
-sem aviso; se ele falhar, envie um áudio seu.
+O servidor do Xilo e o comando de terminal usam a API da instância local do VoiceStudio. Nas vozes do Edge, o Node acessa o serviço de leitura da Microsoft.
 
 ## Chaves de API
 
@@ -250,9 +247,9 @@ mostra sempre o mesmo frame para o mesmo instante.
 ### 5. Legendas e exportação
 
 - `compositor/compositor.ts`: desenha o canvas WebGL num canvas 2D e, por
-  cima, o `locationTitle` (serifado, com fade) e a pílula branca da legenda
-  com a palavra atual destacada. Como tudo está no mesmo canvas, tudo sai na
-  gravação.
+  cima, o `locationTitle` (serifado, com fade) e a legenda no estilo escolhido.
+  O seletor e o vídeo usam o mesmo desenho de `compositor/captions.ts`.
+  Como tudo está no mesmo canvas, a gravação inclui a legenda.
 - `export/exporter.ts`: `MediaRecorder` grava o stream do canvas master junto
   com o áudio original (`AudioContext` + `MediaStreamAudioDestinationNode`).
   O frame desenhado segue o relógio do `AudioContext`, então áudio e vídeo não

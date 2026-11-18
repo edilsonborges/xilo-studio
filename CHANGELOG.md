@@ -4,6 +4,29 @@ Todas as mudanças relevantes do Xilo Studio ficam registradas aqui. O formato
 segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões
 seguem o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.8.0] - 2026-11-18
+
+### Adicionado
+
+- VoiceStudio passa a ser a voz inicial, com quatro estilos em português brasileiro. Natural usa Dora, Notícia usa Alex, Conto usa Santa e Documentário combina Dora e Alex. As vozes do Edge continuam disponíveis no seletor.
+
+- A narração ganhou player e histórico das três últimas versões neste navegador. Regenerar seleciona a nova voz. Você pode ouvir e escolher uma versão anterior ou permitir a substituição automática da mais antiga.
+
+- Dê play para ouvir uma amostra da voz antes de gerar o roteiro. Depois de gerar, o player mostra a versão selecionada.
+- Compare os estilos Pílula, Cinema, Manchete, Cordel e Palavra em foco nos cartões abaixo de Legendas na prévia. Vozes, velocidades e versões de áudio também ganharam seletores maiores.
+
+### Alterado
+
+- O player da narração ganhou controles no estilo do Xilo. Clique no título do player para trocar a versão usada no vídeo ou na seta de download para baixar a versão selecionada. O seletor de legenda ocupa toda a largura abaixo da caixa Legendas.
+
+### Corrigido
+
+- O botão Melhorar texto permanece ao lado de Usar exemplo. Se a IA estiver indisponível, o motivo aparece junto ao roteiro.
+
+- Veículos em movimento param antes da fachada de prédios. Rodas e passageiros acompanham a parada ao reproduzir, retroceder e exportar.
+
+- Carros e pedestres também param ao se encontrar, inclusive em cruzamentos e filas. A passada acompanha a distância percorrida, e o salto segue um arco de queda.
+
 ## [0.7.0] - 2026-11-18
 
 ### Adicionado

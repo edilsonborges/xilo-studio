@@ -12,6 +12,7 @@ import { part, toonMaterial } from './toon';
 
 export interface EnvironmentObject {
   group: THREE.Group;
+  obstacles: THREE.Box3[];
   fog: THREE.Fog;
   palette: PresetPalette;
   night: boolean;
@@ -202,13 +203,15 @@ function treeLine(group: THREE.Group, foliage: string, trunk: string, rng: () =>
 }
 
 /** Fileira de prédios ao fundo; à noite as janelas acendem. */
-function skyline(group: THREE.Group, rng: () => number, night: boolean, colors: string[], z = -16): void {
+function skyline(group: THREE.Group, obstacles: THREE.Box3[], rng: () => number, night: boolean, colors: string[], z = -16): void {
   for (let i = 0; i < 12; i++) {
     const w = 3 + rng() * 3;
     const h = 5 + rng() * 9;
     const x = -30 + i * 5.2 + rng() * 1.5;
     const color = colors[i % colors.length];
-    group.add(place(part(box(w, h, 3), night ? shade(color, 0.45) : color, bgOpts), x, h / 2, z - rng() * 6));
+    const tower = place(part(box(w, h, 3), night ? shade(color, 0.45) : color, bgOpts), x, h / 2, z - rng() * 6);
+    group.add(tower);
+    obstacles.push(new THREE.Box3().setFromObject(tower));
     if (night) {
       for (let k = 0; k < 6; k++) {
         if (rng() < 0.45) continue;
@@ -322,7 +325,7 @@ function room(group: THREE.Group, pal: PresetPalette, view: string, opts: { tall
 
 // ---------- cenografia por cenário ----------
 
-function backdrop(preset: Preset, group: THREE.Group, pal: PresetPalette, l: Lighting, rng: () => number, night: boolean): Updater[] {
+function backdrop(preset: Preset, group: THREE.Group, obstacles: THREE.Box3[], pal: PresetPalette, l: Lighting, rng: () => number, night: boolean): Updater[] {
   const updates: Updater[] = [];
   const sunDisc = (r: number, color: string, x: number, y: number) => {
     const d = disc(r, color);
@@ -368,14 +371,14 @@ function backdrop(preset: Preset, group: THREE.Group, pal: PresetPalette, l: Lig
     case 'city_night':
     case 'carnival': {
       const lit = night || preset === 'city_night';
-      skyline(group, rng, lit, preset === 'carnival' ? ['#f0a0b0', '#f0c060', '#8ac8f0', '#a8e0a0'] : ['#b8a890', '#c9897a', '#8fa0b8', '#d8c0a0', '#9a8a7a']);
+      skyline(group, obstacles, rng, lit, preset === 'carnival' ? ['#f0a0b0', '#f0c060', '#8ac8f0', '#a8e0a0'] : ['#b8a890', '#c9897a', '#8fa0b8', '#d8c0a0', '#9a8a7a']);
       // calçadas e faixa de rua
       for (const x of [-4.2, 4.2]) group.add(place(part(box(2.4, 0.12, 60), '#b8b2a8', bgOpts), x, 0.06, -10));
       for (let i = 0; i < 10; i++) group.add(place(part(box(0.15, 0.015, 1.4), '#f2efe0', bgOpts), 0, 0.012, 2 - i * 3.2));
       break;
     }
     case 'town_square':
-      skyline(group, rng, night, ['#e8d8b8', '#d8a890', '#c8d0b0'], -20);
+      skyline(group, obstacles, rng, night, ['#e8d8b8', '#d8a890', '#c8d0b0'], -20);
       group.add(place(part(cyl(6, 6, 0.04, 24), '#d8c8a8', bgOpts), 0, 0.02, -3));
       treeLine(group, pal.foliage, pal.trunk, rng, 8, -12, -18, 7);
       break;
@@ -618,7 +621,8 @@ export function createEnvironment(preset: Preset, colors: EnvironmentColors, see
   group.add(createSky(l.sky, l.skyTop));
   const { ambient, sun } = addLights(group, l);
 
-  const updates: Updater[] = backdrop(preset, group, palette, l, rng, night);
+  const obstacles: THREE.Box3[] = [];
+  const updates: Updater[] = backdrop(preset, group, obstacles, palette, l, rng, night);
   if (!scenario.indoor) {
     if (night) updates.push(stars(group, rng, preset === 'starry_night' ? 520 : 200));
     if (weather === 'cloudy' || weather === 'rain' || weather === 'storm') {
@@ -654,6 +658,7 @@ export function createEnvironment(preset: Preset, colors: EnvironmentColors, see
     group,
     palette,
     night,
+    obstacles,
     fog: new THREE.Fog(l.fog, l.fogNear, l.fogFar),
     update: (t) => {
       for (const u of updates) u(t);

@@ -107,3 +107,11 @@ compartilhe o link com um parâmetro, como `?v=2`.
 | E-mail não chega | painel de atividade (o convite foi feito?) e a lista de envios do Resend |
 | "A IA não respondeu" | o opencode-gateway: `curl http://127.0.0.1:4097/healthz` |
 | Vídeo exportado travado | visuais com efeito dependem da GPU do navegador; teste a "Xilogravura clássica" |
+
+## Narração com VoiceStudio
+
+No Mac Apple Silicon que atende o Xilo, inicie o backend do VoiceStudio e baixe o modelo Kokoro no catálogo de MLX-Audio. A voz inicial é a brasileira `pf_dora`. O Xilo acessa a API compatível com OpenAI em `/v1/audio/speech`. O Docker usa `http://host.docker.internal:3900` por padrão. Em desenvolvimento fora do Docker, o endereço é `http://127.0.0.1:3900`.
+
+Se a instância usar outra porta ou exigir autenticação, configure `VOICESTUDIO_URL` e `VOICESTUDIO_API_KEY` no servidor Xilo. A chave corresponde à `OMNIVOICE_API_KEY` da instância. Os estilos Notícia, Conto e Documentário usam os perfis do Kokoro. Para trocar o motor ou o perfil do estilo Natural, ajuste `VOICESTUDIO_MODEL` e `VOICESTUDIO_VOICE`. O cliente consulta o andamento enquanto a síntese roda. Para os tempos das legendas, ele usa o alinhador selecionado nas configurações. As vozes Edge continuam fornecendo tempos por palavra.
+
+[Instalação no macOS](https://github.com/debpalash/VoiceStudio/blob/main/docs/install/macos.md) · [Motor MLX-Audio](https://github.com/debpalash/VoiceStudio/blob/main/docs/engines/mlx-audio.md)

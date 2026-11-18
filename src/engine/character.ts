@@ -285,6 +285,8 @@ export interface PoseOptions {
   moving?: boolean;
   /** o personagem está se deslocando a pé nesta cena ("carry" anda) */
   travelling?: boolean;
+  /** Distância a pé, em unidades do próprio personagem. */
+  strideDistance?: number;
   /** segundos desde o início da cena (queda acontece uma vez) */
   elapsed?: number;
 }
@@ -330,9 +332,12 @@ export function poseCharacter(
   if (blinkPhase < 0.12) for (const eye of rig.eyes) eye.scale.y = 0.15;
   rig.torso.rotation.x = rig.stoop;
 
+  const stride = (length: number, cadence: number) => p + (options.strideDistance === undefined
+    ? t * cadence : 2 * Math.PI * options.strideDistance / length);
+
   switch (animation) {
     case 'walk': {
-      const w = t * 7 + p;
+      const w = stride(1.8, 7);
       const swing = Math.sin(w);
       rig.legL.rotation.x = 0.6 * swing;
       rig.legR.rotation.x = -0.6 * swing;
@@ -351,7 +356,7 @@ export function poseCharacter(
       break;
     }
     case 'run': {
-      const w = t * 11 + p;
+      const w = stride(2.6, 11);
       const swing = Math.sin(w);
       rig.legL.rotation.x = 1.05 * swing;
       rig.legR.rotation.x = -1.05 * swing;
@@ -368,7 +373,8 @@ export function poseCharacter(
     }
     case 'jump': {
       const cycle = (t * 0.9 + p) % 1;
-      const air = cycle > 0.25 && cycle < 0.85 ? Math.sin(((cycle - 0.25) / 0.6) * Math.PI) : 0;
+      const flight = Math.min(1, Math.max(0, (cycle - 0.25) / 0.6));
+      const air = 4 * flight * (1 - flight);
       const crouch = cycle <= 0.25 ? Math.sin((cycle / 0.25) * Math.PI) : 0;
       rig.body.position.y = 0.55 * air;
       rig.hips.position.y = HIP_HEIGHT - 0.22 * crouch;
@@ -614,7 +620,7 @@ export function poseCharacter(
       rig.elbowR.rotation.x = -0.75;
       rig.torso.rotation.x = -0.06 + rig.stoop;
       if (options.travelling) {
-        const w = t * 6 + p;
+        const w = stride(1.5, 6);
         rig.legL.rotation.x = 0.5 * Math.sin(w);
         rig.legR.rotation.x = -0.5 * Math.sin(w);
         rig.kneeL.rotation.x = 0.8 * Math.max(0, -Math.cos(w));
@@ -730,6 +736,10 @@ const TRANSITION = 0.32;
  * são misturados com o estado de base; o resto é a pose direta.
  */
 function poseAction(rig: CharacterRig, animation: AnimationName, time: number, local: number, options: PoseOptions, delay: number): void {
+  if (options.travelling === false && (animation === 'walk' || animation === 'run')) {
+    poseCharacter(rig, 'idle', time, options);
+    return;
+  }
   const opts = { ...options, elapsed: local };
   const weight = oneShotWeight(animation, local + 0.35 - delay, 0);
   if (weight >= 1) {

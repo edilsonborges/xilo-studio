@@ -3,7 +3,7 @@ import './auth.css';
 import { currentUser, logout } from './api';
 
 /** Mostra quem está logado, o link do painel (admins) e o botão de sair. */
-export async function initSession(): Promise<void> {
+export async function initSession(): Promise<string | undefined> {
   const box = document.getElementById('session');
   if (!box) return;
   try {
@@ -17,6 +17,7 @@ export async function initSession(): Promise<void> {
     document.getElementById('open-admin')!.hidden = !user.admin;
     document.getElementById('logout')!.addEventListener('click', () => void logout());
     box.hidden = false;
+    return user.id;
   } catch {
     // Sem servidor de contas (ex.: `vite` sozinho): o app continua funcionando.
   }
